@@ -60,6 +60,7 @@
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 static HAL_StatusTypeDef RunEepromSmokeTest(void);
+static void ShowDisplayBootSequence(void);
 static void ShowEepromProgress(void);
 static void ShowEepromStatus(HAL_StatusTypeDef status);
 
@@ -106,6 +107,23 @@ static HAL_StatusTypeDef RunEepromSmokeTest(void)
   }
 
   return HAL_OK;
+}
+
+static void ShowDisplayBootSequence(void)
+{
+  SSD1322_Clear(0x0FU);
+  SSD1322_Flush();
+  HAL_Delay(120U);
+
+  SSD1322_Clear(0x00U);
+  SSD1322_Flush();
+  HAL_Delay(120U);
+
+  SSD1322_DrawString8x8(8U, 8U, "PULTCODEX BOOT", 0x0FU);
+  SSD1322_DrawString8x8(8U, 24U, "OLED RESET OK", 0x0FU);
+  SSD1322_DrawString8x8(8U, 40U, "STARTING...", 0x0FU);
+  SSD1322_Flush();
+  HAL_Delay(180U);
 }
 
 static void ShowEepromProgress(void)
@@ -195,6 +213,7 @@ int main(void)
   }
 
   SSD1322_Init();
+  ShowDisplayBootSequence();
   ShowEepromProgress();
   ShowEepromStatus(RunEepromSmokeTest());
 
