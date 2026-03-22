@@ -4,10 +4,35 @@
 
 extern I2C_HandleTypeDef hi2c2;
 
+static uint16_t at24_i2c_addr = AT24C256_I2C_BASE_ADDR;
+
+uint16_t AT24_GetAddress(void)
+{
+  return at24_i2c_addr;
+}
+
+HAL_StatusTypeDef AT24_DetectAddress(void)
+{
+  uint16_t candidate;
+
+  for (candidate = AT24C256_I2C_BASE_ADDR;
+       candidate <= (AT24C256_I2C_BASE_ADDR + (7U << 1));
+       candidate = (uint16_t)(candidate + 2U))
+  {
+    if (HAL_I2C_IsDeviceReady(&hi2c2, candidate, 3U, 10U) == HAL_OK)
+    {
+      at24_i2c_addr = candidate;
+      return HAL_OK;
+    }
+  }
+
+  return HAL_ERROR;
+}
+
 HAL_StatusTypeDef AT24_IsReady(uint32_t trials, uint32_t timeout_ms)
 {
   return HAL_I2C_IsDeviceReady(&hi2c2,
-                               AT24C256_I2C_ADDR,
+                               at24_i2c_addr,
                                (uint32_t)trials,
                                (uint32_t)timeout_ms);
 }
@@ -23,7 +48,7 @@ HAL_StatusTypeDef AT24_Read(uint16_t mem_addr,
   }
 
   return HAL_I2C_Mem_Read(&hi2c2,
-                          AT24C256_I2C_ADDR,
+                          at24_i2c_addr,
                           mem_addr,
                           I2C_MEMADD_SIZE_16BIT,
                           data,
@@ -50,7 +75,7 @@ HAL_StatusTypeDef AT24_Write(uint16_t mem_addr,
     uint16_t chunk = (size < page_space) ? size : page_space;
 
     status = HAL_I2C_Mem_Write(&hi2c2,
-                               AT24C256_I2C_ADDR,
+                               at24_i2c_addr,
                                mem_addr,
                                I2C_MEMADD_SIZE_16BIT,
                                (uint8_t *)data,

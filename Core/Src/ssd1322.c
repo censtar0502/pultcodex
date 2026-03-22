@@ -22,6 +22,7 @@ static void ssd1322_unselect(void)
 
 static void ssd1322_write_command(uint8_t cmd)
 {
+  /* SSD1322 command phase: DC must be LOW only for the opcode byte itself. */
   HAL_GPIO_WritePin(OLED_DC_GPIO_Port, OLED_DC_Pin, GPIO_PIN_RESET);
   ssd1322_select();
   HAL_SPI_Transmit(&hspi2, &cmd, 1U, HAL_MAX_DELAY);
@@ -30,6 +31,7 @@ static void ssd1322_write_command(uint8_t cmd)
 
 static void ssd1322_write_data_byte(uint8_t val)
 {
+  /* SSD1322 parameter/data phase: every command argument must go with DC HIGH. */
   HAL_GPIO_WritePin(OLED_DC_GPIO_Port, OLED_DC_Pin, GPIO_PIN_SET);
   ssd1322_select();
   HAL_SPI_Transmit(&hspi2, &val, 1U, HAL_MAX_DELAY);
@@ -202,6 +204,9 @@ void SSD1322_Init(void)
   while (i < sizeof(init_seq))
   {
     uint8_t cmd = init_seq[i++];
+
+    /* Never send command parameters through ssd1322_write_command():
+       SSD1322 interprets them as new opcodes and the whole init sequence breaks. */
     ssd1322_write_command(cmd);
 
     switch (cmd)

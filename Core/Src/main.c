@@ -27,6 +27,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include <stdio.h>
 #include <string.h>
 
 #include "eeprom_at24.h"
@@ -59,6 +60,7 @@
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 static HAL_StatusTypeDef RunEepromSmokeTest(void);
+static void ShowEepromProgress(void);
 static void ShowEepromStatus(HAL_StatusTypeDef status);
 
 /* USER CODE END PFP */
@@ -73,6 +75,12 @@ static HAL_StatusTypeDef RunEepromSmokeTest(void)
   };
   uint8_t rx_data[sizeof(tx_data)] = {0};
   HAL_StatusTypeDef status;
+
+  status = AT24_DetectAddress();
+  if (status != HAL_OK)
+  {
+    return status;
+  }
 
   status = AT24_IsReady(100U, 10U);
   if (status != HAL_OK)
@@ -100,24 +108,37 @@ static HAL_StatusTypeDef RunEepromSmokeTest(void)
   return HAL_OK;
 }
 
-static void ShowEepromStatus(HAL_StatusTypeDef status)
+static void ShowEepromProgress(void)
 {
   SSD1322_Clear(0x00U);
   SSD1322_DrawString8x8(8U, 8U, "EEPROM TEST", 0x0FU);
+  SSD1322_DrawString8x8(8U, 24U, "SCAN I2C BUS...", 0x0FU);
+  SSD1322_DrawString8x8(8U, 40U, "WAIT", 0x0FU);
+  SSD1322_Flush();
+}
+
+static void ShowEepromStatus(HAL_StatusTypeDef status)
+{
+  char addr_line[20];
+
+  SSD1322_Clear(0x00U);
+  SSD1322_DrawString8x8(8U, 8U, "EEPROM TEST", 0x0FU);
+  (void)snprintf(addr_line, sizeof(addr_line), "I2C: 0x%02X", (unsigned int)(AT24_GetAddress() >> 1));
+  SSD1322_DrawString8x8(8U, 16U, addr_line, 0x0FU);
 
   if (status == HAL_OK)
   {
     HAL_GPIO_WritePin(LD4_GPIO_Port, LD4_Pin, GPIO_PIN_SET);
     HAL_GPIO_WritePin(LD5_GPIO_Port, LD5_Pin, GPIO_PIN_RESET);
-    SSD1322_DrawString8x8(8U, 24U, "STATUS: OK", 0x0FU);
-    SSD1322_DrawString8x8(8U, 40U, "ADDR 0x0020 PASS", 0x0FU);
+    SSD1322_DrawString8x8(8U, 32U, "STATUS: OK", 0x0FU);
+    SSD1322_DrawString8x8(8U, 48U, "ADDR 0x0020 PASS", 0x0FU);
   }
   else
   {
     HAL_GPIO_WritePin(LD4_GPIO_Port, LD4_Pin, GPIO_PIN_RESET);
     HAL_GPIO_WritePin(LD5_GPIO_Port, LD5_Pin, GPIO_PIN_SET);
-    SSD1322_DrawString8x8(8U, 24U, "STATUS: FAIL", 0x0FU);
-    SSD1322_DrawString8x8(8U, 40U, "CHECK I2C/WIRING", 0x0FU);
+    SSD1322_DrawString8x8(8U, 32U, "STATUS: FAIL", 0x0FU);
+    SSD1322_DrawString8x8(8U, 48U, "CHECK A0-A2/I2C", 0x0FU);
   }
 
   SSD1322_Flush();
@@ -174,6 +195,7 @@ int main(void)
   }
 
   SSD1322_Init();
+  ShowEepromProgress();
   ShowEepromStatus(RunEepromSmokeTest());
 
   /* USER CODE END 2 */
