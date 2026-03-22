@@ -113,17 +113,18 @@ static void ShowDisplayBootSequence(void)
 {
   SSD1322_Clear(0x0FU);
   SSD1322_Flush();
-  HAL_Delay(120U);
+  HAL_Delay(350U);
 
   SSD1322_Clear(0x00U);
   SSD1322_Flush();
-  HAL_Delay(120U);
+  HAL_Delay(350U);
 
+  SSD1322_Clear(0x00U);
   SSD1322_DrawString8x8(8U, 8U, "PULTCODEX BOOT", 0x0FU);
   SSD1322_DrawString8x8(8U, 24U, "OLED RESET OK", 0x0FU);
   SSD1322_DrawString8x8(8U, 40U, "STARTING...", 0x0FU);
   SSD1322_Flush();
-  HAL_Delay(180U);
+  HAL_Delay(700U);
 }
 
 static void ShowEepromProgress(void)
