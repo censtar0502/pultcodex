@@ -1,0 +1,38 @@
+# STM32CubeIDE / Eclipse
+.settings/language.settings.xml
+.settings/stm32cubeide.project.prefs
+.settings/org.eclipse.core.resources.prefs
+/.docs/
+
+# Build output
+Debug/
+Release/
+build/
+
+# Generated dependency / temp files
+*.o
+*.d
+*.su
+*.elf
+*.map
+*.list
+*.hex
+*.bin
+*.a
+*.obj
+*.tmp
+
+# Logs
+*.log
+
+# OS / editor noise
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+*.bak
+*.orig
+
+# Python cache if helper scripts appear later
+__pycache__/
+*.pyc
