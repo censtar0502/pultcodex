@@ -2,6 +2,7 @@
 
 #include <string.h>
 
+#include "font8x8_basic.h"
 #include "main.h"
 #include "spi.h"
 
@@ -27,6 +28,14 @@ static void ssd1322_write_command(uint8_t cmd)
   ssd1322_unselect();
 }
 
+static void ssd1322_write_data_byte(uint8_t val)
+{
+  HAL_GPIO_WritePin(OLED_DC_GPIO_Port, OLED_DC_Pin, GPIO_PIN_SET);
+  ssd1322_select();
+  HAL_SPI_Transmit(&hspi2, &val, 1U, HAL_MAX_DELAY);
+  ssd1322_unselect();
+}
+
 static void ssd1322_write_data(const uint8_t *data, uint16_t size)
 {
   HAL_GPIO_WritePin(OLED_DC_GPIO_Port, OLED_DC_Pin, GPIO_PIN_SET);
@@ -47,12 +56,12 @@ static void ssd1322_set_window(uint8_t col_start, uint8_t col_end,
                                uint8_t row_start, uint8_t row_end)
 {
   ssd1322_write_command(0x15);
-  ssd1322_write_command(col_start);
-  ssd1322_write_command(col_end);
+  ssd1322_write_data_byte(col_start);
+  ssd1322_write_data_byte(col_end);
 
   ssd1322_write_command(0x75);
-  ssd1322_write_command(row_start);
-  ssd1322_write_command(row_end);
+  ssd1322_write_data_byte(row_start);
+  ssd1322_write_data_byte(row_end);
 }
 
 uint8_t *SSD1322_GetFramebuffer(void)
@@ -66,6 +75,72 @@ void SSD1322_Clear(uint8_t gray4)
   memset(ssd1322_fb, packed, sizeof(ssd1322_fb));
 }
 
+void SSD1322_DrawPixel(uint16_t x, uint16_t y, uint8_t gray4)
+{
+  uint32_t index;
+  uint8_t color;
+
+  if (x >= SSD1322_WIDTH || y >= SSD1322_HEIGHT)
+  {
+    return;
+  }
+
+  color = (uint8_t)(gray4 & 0x0F);
+  index = ((uint32_t)y * (SSD1322_WIDTH / 2U)) + (x / 2U);
+
+  if ((x & 1U) == 0U)
+  {
+    ssd1322_fb[index] = (uint8_t)((ssd1322_fb[index] & 0x0F) | (color << 4));
+  }
+  else
+  {
+    ssd1322_fb[index] = (uint8_t)((ssd1322_fb[index] & 0xF0) | color);
+  }
+}
+
+void SSD1322_DrawChar8x8(uint16_t x, uint16_t y, char ch, uint8_t gray4)
+{
+  const uint8_t *glyph;
+  uint8_t uch = (uint8_t)ch;
+  uint32_t row;
+  uint32_t col;
+
+  if (uch < 0x20U || uch > 0x7FU)
+  {
+    uch = 0x20U;
+  }
+
+  glyph = font8x8_basic[uch - 0x20U];
+
+  for (row = 0U; row < 8U; ++row)
+  {
+    uint8_t bits = glyph[row];
+
+    for (col = 0U; col < 8U; ++col)
+    {
+      if ((bits & (1U << (7U - col))) != 0U)
+      {
+        SSD1322_DrawPixel((uint16_t)(x + col), (uint16_t)(y + row), gray4);
+      }
+    }
+  }
+}
+
+void SSD1322_DrawString8x8(uint16_t x, uint16_t y, const char *s, uint8_t gray4)
+{
+  while (*s != '\0')
+  {
+    if (x > (SSD1322_WIDTH - 8U))
+    {
+      break;
+    }
+
+    SSD1322_DrawChar8x8(x, y, *s, gray4);
+    ++s;
+    x = (uint16_t)(x + 8U);
+  }
+}
+
 void SSD1322_Flush(void)
 {
   /* Typical 256x64 SSD1322 modules use this visible RAM window. */
@@ -77,17 +152,22 @@ void SSD1322_Flush(void)
 void SSD1322_TestPattern(void)
 {
   uint32_t row;
-  uint32_t col_byte;
+  uint32_t col;
 
-  for (row = 0; row < SSD1322_HEIGHT; ++row)
+  SSD1322_Clear(0x00U);
+
+  for (row = 0U; row < SSD1322_HEIGHT; ++row)
   {
-    uint32_t row_offset = row * (SSD1322_WIDTH / 2U);
-    for (col_byte = 0; col_byte < (SSD1322_WIDTH / 2U); ++col_byte)
+    for (col = 0U; col < SSD1322_WIDTH; ++col)
     {
-      uint8_t gray = (uint8_t)(col_byte / 8U);
-      ssd1322_fb[row_offset + col_byte] = (uint8_t)((gray << 4) | gray);
+      SSD1322_DrawPixel((uint16_t)col, (uint16_t)row, (uint8_t)((col >> 4) & 0x0F));
     }
   }
+
+  SSD1322_DrawString8x8(8U, 8U, "SSD1322 TEST", 0x0FU);
+  SSD1322_DrawString8x8(8U, 20U, "A-Z a-z 0-9", 0x0FU);
+  SSD1322_DrawString8x8(8U, 32U, "!@#$%^&*()[]{}", 0x0FU);
+  SSD1322_DrawString8x8(8U, 44U, "<>/?+-=:_.,;", 0x0FU);
 
   SSD1322_Flush();
 }
@@ -138,14 +218,14 @@ void SSD1322_Init(void)
       case 0xBB:
       case 0xB6:
       case 0xBE:
-        ssd1322_write_command(init_seq[i++]);
+        ssd1322_write_data_byte(init_seq[i++]);
         break;
 
       case 0xA0:
       case 0xB4:
       case 0xD1:
-        ssd1322_write_command(init_seq[i++]);
-        ssd1322_write_command(init_seq[i++]);
+        ssd1322_write_data_byte(init_seq[i++]);
+        ssd1322_write_data_byte(init_seq[i++]);
         break;
 
       default:

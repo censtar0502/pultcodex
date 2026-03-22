@@ -32,6 +32,8 @@ Desktop.ini
 *.swo
 *.bak
 *.orig
+*.launch
+.claude/
 
 # Python cache if helper scripts appear later
 __pycache__/

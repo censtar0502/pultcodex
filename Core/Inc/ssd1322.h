@@ -13,6 +13,9 @@ extern "C" {
 
 void SSD1322_Init(void);
 void SSD1322_Clear(uint8_t gray4);
+void SSD1322_DrawPixel(uint16_t x, uint16_t y, uint8_t gray4);
+void SSD1322_DrawChar8x8(uint16_t x, uint16_t y, char ch, uint8_t gray4);
+void SSD1322_DrawString8x8(uint16_t x, uint16_t y, const char *s, uint8_t gray4);
 void SSD1322_Flush(void);
 void SSD1322_TestPattern(void);
 uint8_t *SSD1322_GetFramebuffer(void);
