@@ -69,8 +69,7 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
-  /* Current stand uses a 5x4 keyboard matrix:
-     PE7..PE10 plus PE11 are rows, PE12..PE15 are columns. */
+  /* Current stand uses a 5x4 matrix: PE7..PE11 are rows, PE12..PE15 are columns. */
   GPIO_InitStruct.Pin = KBD_ROW1_Pin|KBD_ROW2_Pin|KBD_ROW3_Pin|KBD_ROW4_Pin
                           |KBD_COL1_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
