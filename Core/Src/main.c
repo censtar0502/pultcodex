@@ -28,9 +28,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
-#include <string.h>
-
-#include "eeprom_at24.h"
+#include "keyboard.h"
 #include "ssd1322.h"
 
 /* USER CODE END Includes */
@@ -59,106 +57,34 @@
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
-static HAL_StatusTypeDef RunEepromSmokeTest(void);
-static void ShowDisplayBootSequence(void);
-static void ShowEepromProgress(void);
-static void ShowEepromStatus(HAL_StatusTypeDef status);
+static void ShowKeyboardTestScreen(void);
+static void ShowKeyboardEvent(const KeyboardEvent *event);
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-static HAL_StatusTypeDef RunEepromSmokeTest(void)
-{
-  static const uint8_t tx_data[] = {
-    0x50U, 0x55U, 0x4CU, 0x54U, 0x31U, 0x32U, 0x33U, 0x34U,
-    0xAAU, 0x11U, 0x22U, 0x33U, 0x44U, 0x5AU, 0xA5U, 0xC3U
-  };
-  uint8_t rx_data[sizeof(tx_data)] = {0};
-  HAL_StatusTypeDef status;
-
-  status = AT24_DetectAddress();
-  if (status != HAL_OK)
-  {
-    return status;
-  }
-
-  status = AT24_IsReady(100U, 10U);
-  if (status != HAL_OK)
-  {
-    return status;
-  }
-
-  status = AT24_Write(0x0020U, tx_data, (uint16_t)sizeof(tx_data), 100U);
-  if (status != HAL_OK)
-  {
-    return status;
-  }
-
-  status = AT24_Read(0x0020U, rx_data, (uint16_t)sizeof(rx_data), 100U);
-  if (status != HAL_OK)
-  {
-    return status;
-  }
-
-  if (memcmp(tx_data, rx_data, sizeof(tx_data)) != 0)
-  {
-    return HAL_ERROR;
-  }
-
-  return HAL_OK;
-}
-
-static void ShowDisplayBootSequence(void)
-{
-  SSD1322_Clear(0x0FU);
-  SSD1322_Flush();
-  HAL_Delay(350U);
-
-  SSD1322_Clear(0x00U);
-  SSD1322_Flush();
-  HAL_Delay(350U);
-
-  SSD1322_Clear(0x00U);
-  SSD1322_DrawString8x8(8U, 8U, "PULTCODEX BOOT", 0x0FU);
-  SSD1322_DrawString8x8(8U, 24U, "OLED RESET OK", 0x0FU);
-  SSD1322_DrawString8x8(8U, 40U, "STARTING...", 0x0FU);
-  SSD1322_Flush();
-  HAL_Delay(700U);
-}
-
-static void ShowEepromProgress(void)
+static void ShowKeyboardTestScreen(void)
 {
   SSD1322_Clear(0x00U);
-  SSD1322_DrawString8x8(8U, 8U, "EEPROM TEST", 0x0FU);
-  SSD1322_DrawString8x8(8U, 24U, "SCAN I2C BUS...", 0x0FU);
-  SSD1322_DrawString8x8(8U, 40U, "WAIT", 0x0FU);
+  SSD1322_DrawString8x8(8U, 8U, "KEYBOARD TEST", 0x0FU);
+  SSD1322_DrawString8x8(8U, 24U, "PRESS ANY KEY", 0x0FU);
+  SSD1322_DrawString8x8(8U, 40U, "WAITING...", 0x0FU);
   SSD1322_Flush();
 }
 
-static void ShowEepromStatus(HAL_StatusTypeDef status)
+static void ShowKeyboardEvent(const KeyboardEvent *event)
 {
-  char addr_line[20];
+  char key_line[20];
+  const char *state_text;
 
   SSD1322_Clear(0x00U);
-  SSD1322_DrawString8x8(8U, 8U, "EEPROM TEST", 0x0FU);
-  (void)snprintf(addr_line, sizeof(addr_line), "I2C: 0x%02X", (unsigned int)(AT24_GetAddress() >> 1));
-  SSD1322_DrawString8x8(8U, 16U, addr_line, 0x0FU);
-
-  if (status == HAL_OK)
-  {
-    HAL_GPIO_WritePin(LD4_GPIO_Port, LD4_Pin, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(LD5_GPIO_Port, LD5_Pin, GPIO_PIN_RESET);
-    SSD1322_DrawString8x8(8U, 32U, "STATUS: OK", 0x0FU);
-    SSD1322_DrawString8x8(8U, 48U, "ADDR 0x0020 PASS", 0x0FU);
-  }
-  else
-  {
-    HAL_GPIO_WritePin(LD4_GPIO_Port, LD4_Pin, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(LD5_GPIO_Port, LD5_Pin, GPIO_PIN_SET);
-    SSD1322_DrawString8x8(8U, 32U, "STATUS: FAIL", 0x0FU);
-    SSD1322_DrawString8x8(8U, 48U, "CHECK A0-A2/I2C", 0x0FU);
-  }
+  SSD1322_DrawString8x8(8U, 8U, "KEYBOARD TEST", 0x0FU);
+  (void)snprintf(key_line, sizeof(key_line), "KEY: %c", event->key);
+  SSD1322_DrawString8x8(8U, 24U, key_line, 0x0FU);
+  SSD1322_DrawString8x8(8U, 40U, Keyboard_GetLegend(event->key), 0x0FU);
+  state_text = (event->pressed != 0U) ? "STATE: DOWN" : "STATE: UP";
+  SSD1322_DrawString8x8(144U, 24U, state_text, 0x0FU);
 
   SSD1322_Flush();
 }
@@ -214,9 +140,8 @@ int main(void)
   }
 
   SSD1322_Init();
-  ShowDisplayBootSequence();
-  ShowEepromProgress();
-  ShowEepromStatus(RunEepromSmokeTest());
+  Keyboard_Init();
+  ShowKeyboardTestScreen();
 
   /* USER CODE END 2 */
 
@@ -227,6 +152,12 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    KeyboardEvent event;
+
+    if (Keyboard_GetEvent(&event) != 0U)
+    {
+      ShowKeyboardEvent(&event);
+    }
   }
   /* USER CODE END 3 */
 }
@@ -277,6 +208,13 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  if (htim->Instance == TIM4)
+  {
+    Keyboard_Task10ms();
+  }
+}
 
 /* USER CODE END 4 */
 
