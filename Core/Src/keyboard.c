@@ -23,10 +23,10 @@ static const KeyboardGpio kbd_rows[KBD_ROWS] = {
 };
 
 static const KeyboardGpio kbd_cols[KBD_COLS] = {
-  {KBD_COL2_GPIO_Port, KBD_COL2_Pin},
-  {KBD_COL3_GPIO_Port, KBD_COL3_Pin},
+  {KBD_COL5_RES_GPIO_Port, KBD_COL5_RES_Pin},
   {KBD_COL4_GPIO_Port, KBD_COL4_Pin},
-  {KBD_COL5_RES_GPIO_Port, KBD_COL5_RES_Pin}
+  {KBD_COL3_GPIO_Port, KBD_COL3_Pin},
+  {KBD_COL2_GPIO_Port, KBD_COL2_Pin}
 };
 
 static const char kbd_map[KBD_ROWS][KBD_COLS] = {
