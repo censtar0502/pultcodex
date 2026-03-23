@@ -29,9 +29,9 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
+#include "app_log.h"
 #include "keyboard.h"
 #include "ssd1322.h"
-#include "usb_log.h"
 
 /* USER CODE END Includes */
 
@@ -78,26 +78,15 @@ static void ShowKeyboardTestScreen(void)
 static void ShowKeyboardEvent(const KeyboardEvent *event)
 {
   char key_line[20];
-  char log_line[64];
-  const char *state_text;
 
   SSD1322_Clear(0x00U);
   SSD1322_DrawString8x8(8U, 8U, "KEYBOARD TEST", 0x0FU);
   (void)snprintf(key_line, sizeof(key_line), "KEY: %c", event->key);
   SSD1322_DrawString8x8(8U, 24U, key_line, 0x0FU);
   SSD1322_DrawString8x8(8U, 40U, Keyboard_GetLegend(event->key), 0x0FU);
-  state_text = (event->pressed != 0U) ? "STATE: DOWN" : "STATE: UP";
-  SSD1322_DrawString8x8(144U, 24U, state_text, 0x0FU);
+  SSD1322_DrawString8x8(144U, 24U, "STATE: DOWN", 0x0FU);
 
   SSD1322_Flush();
-
-  (void)snprintf(log_line,
-                 sizeof(log_line),
-                 "KEY=%c LEGEND=%s STATE=%s\r\n",
-                 event->key,
-                 Keyboard_GetLegend(event->key),
-                 (event->pressed != 0U) ? "DOWN" : "UP");
-  UsbLog_WriteString(log_line);
 }
 
 /* USER CODE END 0 */
@@ -153,9 +142,9 @@ int main(void)
 
   SSD1322_Init();
   Keyboard_Init();
-  UsbLog_Init();
+  AppLog_Init();
   ShowKeyboardTestScreen();
-  UsbLog_WriteString("PULTCODEX USB CDC READY\r\n");
+  AppLog_Message(APP_LOG_LEVEL_INFO, "BOOT", "PULTCODEX USB CDC READY");
 
   /* USER CODE END 2 */
 
@@ -170,10 +159,15 @@ int main(void)
 
     if (Keyboard_GetEvent(&event) != 0U)
     {
-      ShowKeyboardEvent(&event);
+      AppLog_KeyEvent(&event);
+
+      if (event.pressed != 0U)
+      {
+        ShowKeyboardEvent(&event);
+      }
     }
 
-    UsbLog_Task();
+    AppLog_Task();
   }
   /* USER CODE END 3 */
 }
