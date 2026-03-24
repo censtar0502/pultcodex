@@ -33,7 +33,7 @@
 #include "app_log.h"
 #include "keyboard.h"
 #include "ssd1322.h"
-#include "usart_link_test.h"
+#include "trk_probe.h"
 
 /* USER CODE END Includes */
 
@@ -63,7 +63,7 @@ void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 static void ShowKeyboardTestScreen(void);
 static void ShowKeyboardEvent(const KeyboardEvent *event);
-static void ShowUsartLinkStatus(void);
+static void ShowTrkProbeStatus(void);
 
 /* USER CODE END PFP */
 
@@ -92,12 +92,12 @@ static void ShowKeyboardEvent(const KeyboardEvent *event)
   SSD1322_Flush();
 }
 
-static void ShowUsartLinkStatus(void)
+static void ShowTrkProbeStatus(void)
 {
-  const UsartLinkTestStatus *status = UsartLinkTest_GetStatus();
-  static UsartLinkTestStatus last_drawn_status;
+  const TrkProbeStatus *status = TrkProbe_GetStatus();
+  static TrkProbeStatus last_drawn_status;
   static uint32_t last_draw_ms;
-  char line[32];
+  char line[40];
   uint32_t now = HAL_GetTick();
 
   if ((memcmp(&last_drawn_status, status, sizeof(last_drawn_status)) == 0) &&
@@ -110,28 +110,36 @@ static void ShowUsartLinkStatus(void)
   last_draw_ms = now;
 
   SSD1322_Clear(0x00U);
-  SSD1322_DrawString8x8(8U, 0U, "USART LOOP TEST", 0x0FU);
+  SSD1322_DrawString8x8(8U, 0U, "TRK STATUS PROBE", 0x0FU);
 
-  (void)snprintf(line, sizeof(line), "U1 T%lu R%lu O%lu",
-                 (unsigned long)status->tx1_count,
-                 (unsigned long)status->rx1_count,
-                 (unsigned long)status->rx1_ok_count);
+  (void)snprintf(line, sizeof(line), "1 S:%c N:%c O:%u",
+                 (status->trk1.last_status != 0U) ? (char)status->trk1.last_status : '-',
+                 (status->trk1.last_nozzle != 0U) ? (char)status->trk1.last_nozzle : '-',
+                 (unsigned int)status->trk1.online);
   SSD1322_DrawString8x8(8U, 16U, line, 0x0FU);
 
-  (void)snprintf(line, sizeof(line), "U3 T%lu R%lu O%lu",
-                 (unsigned long)status->tx3_count,
-                 (unsigned long)status->rx3_count,
-                 (unsigned long)status->rx3_ok_count);
+  (void)snprintf(line, sizeof(line), "1 T%lu R%lu C%lu",
+                 (unsigned long)status->trk1.tx_count,
+                 (unsigned long)status->trk1.rx_count,
+                 (unsigned long)status->trk1.crc_error_count);
   SSD1322_DrawString8x8(8U, 28U, line, 0x0FU);
 
-  (void)snprintf(line, sizeof(line), "E:%lu", (unsigned long)status->error_count);
+  (void)snprintf(line, sizeof(line), "2 S:%c N:%c O:%u",
+                 (status->trk2.last_status != 0U) ? (char)status->trk2.last_status : '-',
+                 (status->trk2.last_nozzle != 0U) ? (char)status->trk2.last_nozzle : '-',
+                 (unsigned int)status->trk2.online);
   SSD1322_DrawString8x8(8U, 40U, line, 0x0FU);
 
-  (void)snprintf(line, sizeof(line), "1<-%s", status->last_rx1);
-  SSD1322_DrawString8x8(80U, 40U, line, 0x0FU);
+  (void)snprintf(line, sizeof(line), "2 T%lu R%lu C%lu",
+                 (unsigned long)status->trk2.tx_count,
+                 (unsigned long)status->trk2.rx_count,
+                 (unsigned long)status->trk2.crc_error_count);
+  SSD1322_DrawString8x8(8U, 52U, line, 0x0FU);
 
-  (void)snprintf(line, sizeof(line), "3<-%s", status->last_rx3);
-  SSD1322_DrawString8x8(80U, 52U, line, 0x0FU);
+  (void)snprintf(line, sizeof(line), "TO %lu/%lu",
+                 (unsigned long)status->trk1.timeout_count,
+                 (unsigned long)status->trk2.timeout_count);
+  SSD1322_DrawString8x8(152U, 0U, line, 0x0FU);
 
   SSD1322_Flush();
 }
@@ -190,7 +198,7 @@ int main(void)
   SSD1322_Init();
   Keyboard_Init();
   AppLog_Init();
-  UsartLinkTest_Init();
+  TrkProbe_Init();
   ShowKeyboardTestScreen();
   AppLog_Message(APP_LOG_LEVEL_INFO, "BOOT", "PULTCODEX USB CDC READY");
 
@@ -215,8 +223,8 @@ int main(void)
       }
     }
 
-    UsartLinkTest_Task();
-    ShowUsartLinkStatus();
+    TrkProbe_Task();
+    ShowTrkProbeStatus();
     AppLog_Task();
   }
   /* USER CODE END 3 */
@@ -280,12 +288,12 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t size)
 {
-  UsartLinkTest_OnRxEvent(huart, size);
+  TrkProbe_OnRxEvent(huart, size);
 }
 
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 {
-  UsartLinkTest_OnTxCplt(huart);
+  TrkProbe_OnTxCplt(huart);
 }
 
 /* USER CODE END 4 */
