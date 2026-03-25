@@ -141,17 +141,24 @@ static void TrkProbe_SetAscii(TrkProbeChannelStatus *status, const uint8_t *data
 
 static void TrkProbe_SetPriceValue(TrkProbeChannel *channel, uint32_t price_raw, const char *price_text)
 {
+  char safe_price_text[6];
+
   if (channel == NULL)
   {
     return;
   }
+
+  (void)snprintf(safe_price_text,
+                 sizeof(safe_price_text),
+                 "%s",
+                 (price_text != NULL) ? price_text : "0");
 
   channel->status.price = price_raw;
   channel->status.price_edit_buf[0] = '\0';
   (void)snprintf(channel->status.price_text,
                  sizeof(channel->status.price_text),
                  "%s",
-                 (price_text != NULL) ? price_text : "0");
+                 safe_price_text);
 }
 
 static uint32_t TrkProbe_Crc32(const void *data, uint32_t len)
