@@ -101,27 +101,6 @@ static const char *ChannelMainText(const TrkProbeChannelStatus *ch)
   }
 }
 
-static void FormatPriceText(uint32_t price_tenths, char *buf, size_t buf_size)
-{
-  if ((buf == NULL) || (buf_size == 0U))
-  {
-    return;
-  }
-
-  if ((price_tenths % 10U) == 0U)
-  {
-    (void)snprintf(buf, buf_size, "%lu", (unsigned long)(price_tenths / 10U));
-  }
-  else
-  {
-    (void)snprintf(buf,
-                   buf_size,
-                   "%lu.%lu",
-                   (unsigned long)(price_tenths / 10U),
-                   (unsigned long)(price_tenths % 10U));
-  }
-}
-
 static void ShowMainChannelPanel(uint8_t x, const char *label,
                                  const TrkProbeChannelStatus *ch)
 {
@@ -192,14 +171,12 @@ static void ShowTrkProbeStatus(void)
   {
     const TrkProbeChannelStatus *edit_ch =
       (status->active_ui_trk == 2U) ? &status->trk2 : &status->trk1;
-    char old_price[12];
 
     SSD1322_DrawString8x8(8U, 0U, "EDIT PRICE", 0x0FU);
     (void)snprintf(line, sizeof(line), "TRK%u PRICE",
                    (unsigned int)status->active_ui_trk);
     SSD1322_DrawString8x8(8U, 18U, line, 0x0FU);
-    FormatPriceText(edit_ch->price, old_price, sizeof(old_price));
-    (void)snprintf(line, sizeof(line), "OLD:%s", old_price);
+    (void)snprintf(line, sizeof(line), "OLD:%s", edit_ch->price_text);
     SSD1322_DrawString8x8(8U, 30U, line, 0x0FU);
     (void)snprintf(line, sizeof(line), "NEW:%s",
                    (edit_ch->price_edit_buf[0] != '\0') ? edit_ch->price_edit_buf : "_");

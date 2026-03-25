@@ -12,8 +12,6 @@
 #define TRK_PROBE_TIMEOUT_MS       150UL
 #define TRK_PROBE_FRAME_LEN        5U
 #define TRK_PROBE_STATUS_FRAME_LEN 7U
-#define TRK_PROBE_PRICE_DIGITS_MAX 4U
-
 #define TRK_PROBE_MASK_TRK1        0x01U
 #define TRK_PROBE_MASK_TRK2        0x02U
 #define TRK_PROBE_MASK_TRK3        0x04U
@@ -22,7 +20,7 @@
 #define TRK_PROBE_NUM_CHANNELS     2U
 #define TRK_PROBE_MENU_ITEMS       4U
 #define TRK_PROBE_NV_MAGIC         0x54524B50UL
-#define TRK_PROBE_NV_VERSION       1U
+#define TRK_PROBE_NV_VERSION       2U
 #define TRK_PROBE_NV_ADDR          0x0000U
 #define TRK_PROBE_NV_TIMEOUT_MS    20U
 
@@ -50,7 +48,7 @@ typedef struct
   uint8_t dispense_mode;
   uint8_t reserved0;
   uint8_t reserved1;
-  uint32_t price;
+  char price_text[6];
 } TrkProbeNvChannel;
 
 typedef struct
@@ -70,8 +68,9 @@ static uint8_t TrkProbe_HasPendingRxData(const TrkProbeChannel *channel);
 static void TrkProbe_UpdateStateFromStatus(TrkProbeChannel *channel, uint8_t status_raw);
 static void TrkProbe_RefreshUiFlags(void);
 static void TrkProbe_SyncPublicStatus(TrkProbeChannel *channel);
-static void TrkProbe_SetPriceEditValue(TrkProbeChannel *channel, uint32_t price);
-static uint8_t TrkProbe_ParsePriceEditValue(const TrkProbeChannel *channel, uint32_t *price_out);
+static void TrkProbe_SetPriceValue(TrkProbeChannel *channel, uint32_t price_raw, const char *price_text);
+static uint8_t TrkProbe_ParsePriceText(const char *src, uint32_t *price_raw_out);
+static uint8_t TrkProbe_ParsePriceEditValue(const TrkProbeChannel *channel, uint32_t *price_raw_out);
 static TrkProbeChannel *TrkProbe_GetActiveUiChannel(void);
 static TrkProbeChannel *TrkProbe_GetChannelByTrkId(uint8_t trk_id);
 static void TrkProbe_LogPrice(uint8_t trk_id, uint32_t price);
@@ -81,7 +80,6 @@ static void TrkProbe_SelectTrk(uint8_t trk_id);
 static void TrkProbe_ExitToMain(void);
 static void TrkProbe_SetNotice(const char *text, uint32_t duration_ms);
 static void TrkProbe_CycleDispenseMode(TrkProbeChannel *channel);
-static void TrkProbe_FormatPrice(uint32_t price_tenths, char *buf, size_t buf_size);
 static uint32_t TrkProbe_Crc32(const void *data, uint32_t len);
 static void TrkProbe_LoadDefaults(void);
 static void TrkProbe_ApplyNvConfig(const TrkProbeNvConfig *config);
@@ -141,17 +139,19 @@ static void TrkProbe_SetAscii(TrkProbeChannelStatus *status, const uint8_t *data
   status->last_ascii[copy_len] = '\0';
 }
 
-static void TrkProbe_SetPriceEditValue(TrkProbeChannel *channel, uint32_t price)
+static void TrkProbe_SetPriceValue(TrkProbeChannel *channel, uint32_t price_raw, const char *price_text)
 {
   if (channel == NULL)
   {
     return;
   }
 
-  channel->status.price = price;
-  TrkProbe_FormatPrice(price,
-                       channel->status.price_edit_buf,
-                       sizeof(channel->status.price_edit_buf));
+  channel->status.price = price_raw;
+  channel->status.price_edit_buf[0] = '\0';
+  (void)snprintf(channel->status.price_text,
+                 sizeof(channel->status.price_text),
+                 "%s",
+                 (price_text != NULL) ? price_text : "0");
 }
 
 static uint32_t TrkProbe_Crc32(const void *data, uint32_t len)
@@ -185,62 +185,37 @@ static uint32_t TrkProbe_Crc32(const void *data, uint32_t len)
   return ~crc;
 }
 
-static void TrkProbe_FormatPrice(uint32_t price_tenths, char *buf, size_t buf_size)
+static uint8_t TrkProbe_ParsePriceText(const char *src, uint32_t *price_raw_out)
 {
-  if ((buf == NULL) || (buf_size == 0U))
-  {
-    return;
-  }
-
-  if ((price_tenths % 10U) == 0U)
-  {
-    (void)snprintf(buf,
-                   buf_size,
-                   "%lu",
-                   (unsigned long)(price_tenths / 10U));
-  }
-  else
-  {
-    (void)snprintf(buf,
-                   buf_size,
-                   "%lu.%lu",
-                   (unsigned long)(price_tenths / 10U),
-                   (unsigned long)(price_tenths % 10U));
-  }
-}
-
-static uint8_t TrkProbe_ParsePriceEditValue(const TrkProbeChannel *channel, uint32_t *price_out)
-{
-  const char *src;
-  uint32_t integer_part = 0U;
-  uint32_t fractional_part = 0U;
+  uint32_t price_raw = 0U;
   uint8_t seen_dot = 0U;
+  uint8_t digits_total = 0U;
   uint8_t digits_before_dot = 0U;
   uint8_t digits_after_dot = 0U;
 
-  if ((channel == NULL) || (price_out == NULL))
+  if ((src == NULL) || (price_raw_out == NULL))
   {
     return 0U;
   }
 
-  src = channel->status.price_edit_buf;
   while (*src != '\0')
   {
     if ((*src >= '0') && (*src <= '9'))
     {
+      if (digits_total >= 4U)
+      {
+        return 0U;
+      }
+
+      price_raw = (price_raw * 10UL) + (uint32_t)(*src - '0');
+      ++digits_total;
+
       if (seen_dot == 0U)
       {
-        integer_part = (integer_part * 10UL) + (uint32_t)(*src - '0');
         ++digits_before_dot;
       }
       else
       {
-        if (digits_after_dot >= 1U)
-        {
-          return 0U;
-        }
-
-        fractional_part = (uint32_t)(*src - '0');
         ++digits_after_dot;
       }
     }
@@ -265,19 +240,28 @@ static uint8_t TrkProbe_ParsePriceEditValue(const TrkProbeChannel *channel, uint
     return 0U;
   }
 
-  if ((seen_dot != 0U) && (digits_after_dot == 0U))
+  if ((seen_dot != 0U) && ((digits_after_dot == 0U) || (digits_after_dot > 2U)))
   {
     return 0U;
   }
 
-  *price_out = (integer_part * 10UL) + fractional_part;
-
-  if ((*price_out < 1UL) || (*price_out > 99990UL))
+  if ((price_raw == 0UL) || (price_raw > 9999UL))
   {
     return 0U;
   }
 
+  *price_raw_out = price_raw;
   return 1U;
+}
+
+static uint8_t TrkProbe_ParsePriceEditValue(const TrkProbeChannel *channel, uint32_t *price_raw_out)
+{
+  if ((channel == NULL) || (price_raw_out == NULL))
+  {
+    return 0U;
+  }
+
+  return TrkProbe_ParsePriceText(channel->status.price_edit_buf, price_raw_out);
 }
 
 static void TrkProbe_LoadDefaults(void)
@@ -292,7 +276,7 @@ static void TrkProbe_LoadDefaults(void)
   trk_channels[0].status.enabled = 1U;
   trk_channels[0].status.channel_state = (uint8_t)TRK_CHANNEL_OFFLINE;
   trk_channels[0].status.dispense_mode = (uint8_t)TRK_DISPENSE_MODE_MONEY;
-  TrkProbe_SetPriceEditValue(&trk_channels[0], 1100U);
+  TrkProbe_SetPriceValue(&trk_channels[0], 1100U, "1100");
   strcpy(trk_channels[0].status.last_ascii, "-");
 
   trk_channels[1].huart = &huart1;
@@ -302,7 +286,7 @@ static void TrkProbe_LoadDefaults(void)
   trk_channels[1].status.enabled = 1U;
   trk_channels[1].status.channel_state = (uint8_t)TRK_CHANNEL_OFFLINE;
   trk_channels[1].status.dispense_mode = (uint8_t)TRK_DISPENSE_MODE_MONEY;
-  TrkProbe_SetPriceEditValue(&trk_channels[1], 1100U);
+  TrkProbe_SetPriceValue(&trk_channels[1], 1100U, "1100");
   strcpy(trk_channels[1].status.last_ascii, "-");
 
   trk_probe_status.active_ui_trk = 1U;
@@ -324,9 +308,15 @@ static void TrkProbe_ApplyNvConfig(const TrkProbeNvConfig *config)
   {
     trk_channels[i].status.enabled = (config->channels[i].enabled != 0U) ? 1U : 0U;
 
-    if (config->channels[i].price >= 1UL && config->channels[i].price <= 99990UL)
     {
-      TrkProbe_SetPriceEditValue(&trk_channels[i], config->channels[i].price);
+      uint32_t price_raw;
+
+      if (TrkProbe_ParsePriceText(config->channels[i].price_text, &price_raw) != 0U)
+      {
+        TrkProbe_SetPriceValue(&trk_channels[i],
+                               price_raw,
+                               config->channels[i].price_text);
+      }
     }
 
     if (config->channels[i].dispense_mode <= (uint8_t)TRK_DISPENSE_MODE_FULL)
@@ -390,7 +380,10 @@ static uint8_t TrkProbe_SaveNvConfig(void)
   {
     config.channels[i].enabled = trk_channels[i].status.enabled;
     config.channels[i].dispense_mode = trk_channels[i].status.dispense_mode;
-    config.channels[i].price = trk_channels[i].status.price;
+    (void)snprintf(config.channels[i].price_text,
+                   sizeof(config.channels[i].price_text),
+                   "%s",
+                   trk_channels[i].status.price_text);
   }
 
   config.crc32 = TrkProbe_Crc32(&config, (uint32_t)(sizeof(config) - sizeof(config.crc32)));
@@ -413,8 +406,8 @@ static void TrkProbe_LogPrice(uint8_t trk_id, uint32_t price)
   static const char *const trk_labels[] = {"TRK1", "TRK2", "TRK3"};
   uint8_t idx = (trk_id >= 1U && trk_id <= 3U) ? (trk_id - 1U) : 0U;
 
-  TrkProbe_FormatPrice(price, price_text, sizeof(price_text));
-  (void)snprintf(message, sizeof(message), "price=%s", price_text);
+  (void)snprintf(price_text, sizeof(price_text), "%04lu", (unsigned long)price);
+  (void)snprintf(message, sizeof(message), "price_raw=%s", price_text);
   AppLog_Message(APP_LOG_LEVEL_INFO, trk_labels[idx], message);
 }
 
@@ -510,9 +503,7 @@ static void TrkProbe_ExitToMain(void)
   trk_probe_status.pending_return_to_menu = 0U;
   for (i = 0U; i < TRK_PROBE_NUM_CHANNELS; ++i)
   {
-    TrkProbe_FormatPrice(trk_channels[i].status.price,
-                         trk_channels[i].status.price_edit_buf,
-                         sizeof(trk_channels[i].status.price_edit_buf));
+    trk_channels[i].status.price_edit_buf[0] = '\0';
     TrkProbe_SyncPublicStatus(&trk_channels[i]);
   }
 }
@@ -1117,9 +1108,7 @@ void TrkProbe_HandleKey(const KeyboardEvent *event)
     else
     {
       trk_probe_status.ui_mode = (uint8_t)TRK_UI_MODE_MENU;
-      TrkProbe_FormatPrice(channel->status.price,
-                           channel->status.price_edit_buf,
-                           sizeof(channel->status.price_edit_buf));
+      channel->status.price_edit_buf[0] = '\0';
     }
     return;
   }
@@ -1136,10 +1125,17 @@ void TrkProbe_HandleKey(const KeyboardEvent *event)
       return;
     }
 
-    channel->status.price = parsed_price;
-    TrkProbe_FormatPrice(channel->status.price,
-                         channel->status.price_edit_buf,
-                         sizeof(channel->status.price_edit_buf));
+    if (channel->status.price_edit_buf[0] != '\0')
+    {
+      TrkProbe_SetPriceValue(channel,
+                             parsed_price,
+                             channel->status.price_edit_buf);
+    }
+    else
+    {
+      channel->status.price_edit_buf[0] = '\0';
+    }
+
     TrkProbe_LogPrice(channel->trk_id, channel->status.price);
     if (TrkProbe_SaveNvConfig() != 0U)
     {

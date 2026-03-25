@@ -54,6 +54,7 @@ typedef struct
   uint32_t last_rx_tick;
   uint8_t enabled;
   uint32_t price;
+  char price_text[6];
   uint8_t channel_state;
   uint8_t dispense_mode;
   uint8_t ui_selected;
