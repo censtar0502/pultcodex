@@ -17,6 +17,8 @@ static uint32_t TrkProbe_GetPollInterval(const TrkProbeChannel *channel)
   return TRK_PROBE_POLL_MS;
 }
 
+static void TrkProbe_HandleRxFrame(TrkProbeChannel *channel, const uint8_t *data, uint16_t len);
+
 static void TrkProbe_RegisterCommSuccess(TrkProbeChannel *channel)
 {
   if (channel == NULL)
@@ -47,54 +49,81 @@ static void TrkProbe_RegisterCommFailure(TrkProbeChannel *channel)
   }
 }
 
-static void TrkProbe_UpdateStateFromStatus(TrkProbeChannel *channel, uint8_t status_raw)
+static TrkChannelState TrkProbe_MapProtoStatus(proto_status_t status)
 {
-  if (channel == NULL)
+  switch (status)
+  {
+    case PROTO_STATUS_IDLE:
+      return TRK_CHANNEL_IDLE;
+    case PROTO_STATUS_CALLING:
+      return TRK_CHANNEL_CALLING;
+    case PROTO_STATUS_AUTH_WAIT:
+      return TRK_CHANNEL_AUTH_WAIT;
+    case PROTO_STATUS_STARTED:
+      return TRK_CHANNEL_STARTED;
+    case PROTO_STATUS_PAUSED:
+      return TRK_CHANNEL_PAUSED;
+    case PROTO_STATUS_FUELLING:
+      return TRK_CHANNEL_FUELLING;
+    case PROTO_STATUS_FINISHING:
+      return TRK_CHANNEL_FINISHING;
+    case PROTO_STATUS_FINISHED_HOLD:
+      return TRK_CHANNEL_FINISHED_HOLD;
+    case PROTO_STATUS_ERROR:
+    case PROTO_STATUS_UNKNOWN:
+    default:
+      return TRK_CHANNEL_ERROR;
+  }
+}
+
+static void TrkProbe_ApplyProtoEvent(TrkProbeChannel *channel, const proto_event_t *event)
+{
+  TrkChannelState mapped_state;
+
+  if ((channel == NULL) || (event == NULL))
   {
     return;
   }
 
-  switch (status_raw)
+  mapped_state = TrkProbe_MapProtoStatus(event->status);
+  channel->status.last_status = event->status_raw;
+  channel->status.last_nozzle = event->nozzle_raw;
+  channel->status.channel_state = (uint8_t)mapped_state;
+
+  if (event->transaction_id != '\0')
   {
-    case (uint8_t)'1':
-      channel->status.channel_state = (uint8_t)TRK_CHANNEL_IDLE;
-      TrkProbe_ResetTransactionRuntime(channel);
+    channel->status.transaction_id = event->transaction_id;
+  }
+
+  switch (event->kind)
+  {
+    case PROTO_EVENT_LIVE_VOLUME:
+      channel->status.live_volume_cl = event->volume_cl;
       break;
 
-    case (uint8_t)'2':
-      channel->status.channel_state = (uint8_t)TRK_CHANNEL_CALLING;
+    case PROTO_EVENT_LIVE_MONEY:
+      channel->status.live_money = event->money;
       break;
 
-    case (uint8_t)'3':
-      channel->status.channel_state = (uint8_t)TRK_CHANNEL_AUTH_WAIT;
+    case PROTO_EVENT_FINAL:
+      channel->status.final_money = event->money;
+      channel->status.final_volume_cl = event->volume_cl;
+      channel->status.final_data_ready = 1U;
       break;
 
-    case (uint8_t)'4':
-      channel->status.channel_state = (uint8_t)TRK_CHANNEL_STARTED;
-      break;
-
-    case (uint8_t)'5':
-    case (uint8_t)'7':
-      channel->status.channel_state = (uint8_t)TRK_CHANNEL_PAUSED;
-      break;
-
-    case (uint8_t)'6':
-      channel->status.channel_state = (uint8_t)TRK_CHANNEL_FUELLING;
-      break;
-
-    case (uint8_t)'8':
-      channel->status.channel_state = (uint8_t)TRK_CHANNEL_FINISHING;
-      break;
-
-    case (uint8_t)'9':
-      channel->status.channel_state = (uint8_t)TRK_CHANNEL_FINISHED_HOLD;
-      break;
-
-    case (uint8_t)'0':
+    case PROTO_EVENT_STATUS:
+    case PROTO_EVENT_NONE:
     default:
-      channel->status.channel_state = (uint8_t)TRK_CHANNEL_ERROR;
       break;
   }
+
+  if (mapped_state == TRK_CHANNEL_IDLE)
+  {
+    TrkProbe_ResetTransactionRuntime(channel);
+  }
+
+  TrkProbe_RegisterCommSuccess(channel);
+  ++channel->status.ok_count;
 }
 
 static void TrkProbe_ProcessChunk(TrkProbeChannel *channel, const uint8_t *data, uint16_t len)
@@ -144,7 +173,7 @@ static void TrkProbe_StartRx(TrkProbeChannel *channel)
   __HAL_DMA_DISABLE_IT(channel->huart->hdmarx, DMA_IT_HT);
 }
 
-static void TrkProbe_RestartRx(TrkProbeChannel *channel)
+void TrkProbe_RestartRx(TrkProbeChannel *channel)
 {
   if ((channel == NULL) || (channel->huart == NULL))
   {
@@ -207,7 +236,7 @@ static TrkProbeChannelStatus *TrkProbe_PublicStatus(uint8_t trk_id)
   return &trk_probe_status.trk2;
 }
 
-static void TrkProbe_SyncPublicStatus(TrkProbeChannel *channel)
+void TrkProbe_SyncPublicStatus(TrkProbeChannel *channel)
 {
   if (channel == NULL)
   {
@@ -217,30 +246,23 @@ static void TrkProbe_SyncPublicStatus(TrkProbeChannel *channel)
   *TrkProbe_PublicStatus(channel->trk_id) = channel->status;
 }
 
-static uint8_t TrkProbe_SendFrame(TrkProbeChannel *channel, const uint8_t *payload, uint16_t payload_len)
+static uint8_t TrkProbe_SendFrame(TrkProbeChannel *channel, const frame_t *frame)
 {
-  uint16_t i;
-
-  if ((channel == NULL) || (channel->huart == NULL) || (payload == NULL) || (payload_len == 0U))
+  if ((channel == NULL) || (channel->huart == NULL) || (frame == NULL) || (frame->len == 0U))
   {
     return 0U;
   }
 
   if ((TrkProbe_IsActive(channel->trk_id) == 0U) ||
       (TrkProbe_IsEnabled(channel) == 0U) ||
-      (payload_len > (uint16_t)(sizeof(channel->tx_buf) - 2U)))
+      (frame->len > (uint8_t)sizeof(channel->tx_buf)))
   {
     return 0U;
   }
 
-  channel->tx_buf[0] = 0x02U;
-  for (i = 0U; i < payload_len; ++i)
-  {
-    channel->tx_buf[1U + i] = payload[i];
-  }
-  channel->tx_buf[1U + payload_len] = TrkProbe_CalcXor(&channel->tx_buf[1], payload_len);
+  memcpy(channel->tx_buf, frame->buf, frame->len);
 
-  if (HAL_UART_Transmit_DMA(channel->huart, channel->tx_buf, (uint16_t)(payload_len + 2U)) != HAL_OK)
+  if (HAL_UART_Transmit_DMA(channel->huart, channel->tx_buf, frame->len) != HAL_OK)
   {
     ++channel->status.timeout_count;
     AppLog_Message(APP_LOG_LEVEL_ERROR, "TRK", "TX DMA start failed");
@@ -256,24 +278,82 @@ static uint8_t TrkProbe_SendFrame(TrkProbeChannel *channel, const uint8_t *paylo
   AppLog_ProtoFrame(channel->trk_id,
                     APP_LOG_PROTO_DIR_TX,
                     channel->tx_buf,
-                    (uint16_t)(payload_len + 2U));
+                    frame->len);
   TrkProbe_SyncPublicStatus(channel);
   return 1U;
 }
 
 static uint8_t TrkProbe_SendSimpleCommand(TrkProbeChannel *channel, char command)
 {
-  uint8_t payload[3];
+  frame_t frame;
 
-  if (channel == NULL)
+  if ((channel == NULL) || (channel->protocol_vtable == NULL))
   {
     return 0U;
   }
 
-  payload[0] = channel->addr_hi;
-  payload[1] = channel->addr_lo;
-  payload[2] = (uint8_t)command;
-  return TrkProbe_SendFrame(channel, payload, sizeof(payload));
+  switch (command)
+  {
+    case 'S':
+      if (channel->protocol_vtable->build_status_poll == NULL)
+      {
+        return 0U;
+      }
+      if (channel->protocol_vtable->build_status_poll(channel->proto_ctx, &frame) == 0U)
+      {
+        return 0U;
+      }
+      break;
+
+    case 'L':
+      if (channel->protocol_vtable->build_live_volume_request == NULL)
+      {
+        return 0U;
+      }
+      if (channel->protocol_vtable->build_live_volume_request(channel->proto_ctx, &frame) == 0U)
+      {
+        return 0U;
+      }
+      break;
+
+    case 'R':
+      if (channel->protocol_vtable->build_live_money_request == NULL)
+      {
+        return 0U;
+      }
+      if (channel->protocol_vtable->build_live_money_request(channel->proto_ctx, &frame) == 0U)
+      {
+        return 0U;
+      }
+      break;
+
+    case 'T':
+      if (channel->protocol_vtable->build_final_request == NULL)
+      {
+        return 0U;
+      }
+      if (channel->protocol_vtable->build_final_request(channel->proto_ctx, &frame) == 0U)
+      {
+        return 0U;
+      }
+      break;
+
+    case 'N':
+      if (channel->protocol_vtable->build_close_transaction == NULL)
+      {
+        return 0U;
+      }
+      if (channel->protocol_vtable->build_close_transaction(channel->proto_ctx, &frame) == 0U)
+      {
+        return 0U;
+      }
+      break;
+
+    default:
+      return 0U;
+  }
+
+  return TrkProbe_SendFrame(channel, &frame);
 }
 
 static void TrkProbe_SendPoll(TrkProbeChannel *channel)
@@ -281,12 +361,11 @@ static void TrkProbe_SendPoll(TrkProbeChannel *channel)
   (void)TrkProbe_SendSimpleCommand(channel, 'S');
 }
 
-static uint8_t TrkProbe_StartTransaction(TrkProbeChannel *channel)
+uint8_t TrkProbe_StartTransaction(TrkProbeChannel *channel)
 {
-  uint8_t payload[20];
-  int written;
+  frame_t frame;
 
-  if (channel == NULL)
+  if ((channel == NULL) || (channel->protocol_vtable == NULL))
   {
     return 0U;
   }
@@ -305,46 +384,43 @@ static uint8_t TrkProbe_StartTransaction(TrkProbeChannel *channel)
     return 0U;
   }
 
-  payload[0] = channel->addr_hi;
-  payload[1] = channel->addr_lo;
-
   if ((TrkDispenseMode)channel->status.dispense_mode == TRK_DISPENSE_MODE_MONEY)
   {
-    if (channel->status.preset_money == 0U)
+    if ((channel->status.preset_money == 0U) ||
+        (channel->protocol_vtable->build_start_money == NULL))
     {
       return 0U;
     }
 
-    written = snprintf((char *)&payload[2],
-                       sizeof(payload) - 2U,
-                       "M1;%06lu;%04lu",
-                       (unsigned long)channel->status.preset_money,
-                       (unsigned long)channel->status.price);
+    if (channel->protocol_vtable->build_start_money(channel->proto_ctx,
+                                                    channel->status.preset_money,
+                                                    channel->status.price,
+                                                    &frame) == 0U)
+    {
+      return 0U;
+    }
   }
   else
   {
-    if (channel->status.preset_volume_cl == 0U)
+    if ((channel->status.preset_volume_cl == 0U) ||
+        (channel->protocol_vtable->build_start_volume == NULL))
     {
       return 0U;
     }
 
-    written = snprintf((char *)&payload[2],
-                       sizeof(payload) - 2U,
-                       "V1;%06lu;%04lu",
-                       (unsigned long)channel->status.preset_volume_cl,
-                       (unsigned long)channel->status.price);
+    if (channel->protocol_vtable->build_start_volume(channel->proto_ctx,
+                                                     channel->status.preset_volume_cl,
+                                                     channel->status.price,
+                                                     &frame) == 0U)
+    {
+      return 0U;
+    }
   }
 
-  if ((written <= 0) || ((uint16_t)(2U + written) > (uint16_t)(sizeof(payload) - 1U)))
+  if (TrkProbe_SendFrame(channel, &frame) == 0U)
   {
     return 0U;
   }
-
-  if (TrkProbe_SendFrame(channel, payload, (uint16_t)(2U + written)) == 0U)
-  {
-    return 0U;
-  }
-
   channel->status.transaction_pending = 1U;
   channel->live_poll_phase = 0U;
   channel->final_request_sent = 0U;
@@ -356,119 +432,9 @@ static uint8_t TrkProbe_StartTransaction(TrkProbeChannel *channel)
   return 1U;
 }
 
-static void TrkProbe_HandleStatusResponse(TrkProbeChannel *channel, const uint8_t *data, uint16_t len)
-{
-  uint8_t crc_expected;
-
-  if ((channel == NULL) || (data == NULL) || (len < 7U))
-  {
-    if (channel != NULL)
-    {
-      ++channel->status.crc_error_count;
-    }
-    return;
-  }
-
-  crc_expected = TrkProbe_CalcXor(&data[1], (uint16_t)(len - 2U));
-  if (crc_expected != data[len - 1U])
-  {
-    ++channel->status.crc_error_count;
-    channel->status.waiting_reply = 0U;
-    TrkProbe_RegisterCommFailure(channel);
-    return;
-  }
-
-  if ((data[0] != 0x02U) || (data[1] != channel->addr_hi) || (data[2] != channel->addr_lo) || (data[3] != (uint8_t)'S'))
-  {
-    ++channel->status.crc_error_count;
-    channel->status.waiting_reply = 0U;
-    TrkProbe_RegisterCommFailure(channel);
-    return;
-  }
-
-  channel->status.last_status = data[4];
-  channel->status.last_nozzle = data[5];
-  channel->status.waiting_reply = 0U;
-  TrkProbe_RegisterCommSuccess(channel);
-  TrkProbe_UpdateStateFromStatus(channel, data[4]);
-  ++channel->status.ok_count;
-}
-
-static void TrkProbe_ParseLiveVolumeResponse(TrkProbeChannel *channel, const uint8_t *data, uint16_t len)
-{
-  char value_buf[7];
-
-  if ((channel == NULL) || (data == NULL) || (len < 15U) || (data[7] != (uint8_t)';'))
-  {
-    ++channel->status.crc_error_count;
-    TrkProbe_RegisterCommFailure(channel);
-    return;
-  }
-
-  memcpy(value_buf, &data[8], 6U);
-  value_buf[6] = '\0';
-
-  channel->status.live_volume_cl = (uint32_t)strtoul(value_buf, NULL, 10);
-  channel->status.last_nozzle = data[4];
-  channel->status.transaction_id = (char)data[5];
-  TrkProbe_UpdateStateFromStatus(channel, data[6]);
-  TrkProbe_RegisterCommSuccess(channel);
-  ++channel->status.ok_count;
-}
-
-static void TrkProbe_ParseLiveMoneyResponse(TrkProbeChannel *channel, const uint8_t *data, uint16_t len)
-{
-  char value_buf[7];
-
-  if ((channel == NULL) || (data == NULL) || (len < 15U) || (data[7] != (uint8_t)';'))
-  {
-    ++channel->status.crc_error_count;
-    TrkProbe_RegisterCommFailure(channel);
-    return;
-  }
-
-  memcpy(value_buf, &data[8], 6U);
-  value_buf[6] = '\0';
-
-  channel->status.live_money = (uint32_t)strtoul(value_buf, NULL, 10);
-  channel->status.last_nozzle = data[4];
-  channel->status.transaction_id = (char)data[5];
-  TrkProbe_UpdateStateFromStatus(channel, data[6]);
-  TrkProbe_RegisterCommSuccess(channel);
-  ++channel->status.ok_count;
-}
-
-static void TrkProbe_ParseFinalResponse(TrkProbeChannel *channel, const uint8_t *data, uint16_t len)
-{
-  char money_buf[7];
-  char volume_buf[7];
-
-  if ((channel == NULL) || (data == NULL) || (len < 27U) ||
-      (data[7] != (uint8_t)';') || (data[14] != (uint8_t)';') || (data[21] != (uint8_t)';'))
-  {
-    ++channel->status.crc_error_count;
-    TrkProbe_RegisterCommFailure(channel);
-    return;
-  }
-
-  memcpy(money_buf, &data[8], 6U);
-  money_buf[6] = '\0';
-  memcpy(volume_buf, &data[15], 6U);
-  volume_buf[6] = '\0';
-
-  channel->status.final_money = (uint32_t)strtoul(money_buf, NULL, 10);
-  channel->status.final_volume_cl = (uint32_t)strtoul(volume_buf, NULL, 10);
-  channel->status.last_nozzle = data[4];
-  channel->status.transaction_id = (char)data[5];
-  channel->status.final_data_ready = 1U;
-  TrkProbe_UpdateStateFromStatus(channel, data[6]);
-  TrkProbe_RegisterCommSuccess(channel);
-  ++channel->status.ok_count;
-}
-
 static void TrkProbe_HandleRxFrame(TrkProbeChannel *channel, const uint8_t *data, uint16_t len)
 {
-  uint8_t crc_expected;
+  proto_event_t event;
 
   if ((channel == NULL) || (data == NULL) || (len < 5U))
   {
@@ -487,11 +453,9 @@ static void TrkProbe_HandleRxFrame(TrkProbeChannel *channel, const uint8_t *data
   TrkProbe_SetAscii(&channel->status, data, len);
   AppLog_ProtoFrame(channel->trk_id, APP_LOG_PROTO_DIR_RX, data, len);
 
-  crc_expected = TrkProbe_CalcXor(&data[1], (uint16_t)(len - 2U));
-  if ((data[0] != 0x02U) ||
-      (data[1] != channel->addr_hi) ||
-      (data[2] != channel->addr_lo) ||
-      (crc_expected != data[len - 1U]))
+  if ((channel->protocol_vtable == NULL) ||
+      (channel->protocol_vtable->parse_response == NULL) ||
+      (channel->protocol_vtable->parse_response(channel->proto_ctx, data, len, &event) == 0U))
   {
     ++channel->status.crc_error_count;
     channel->status.waiting_reply = 0U;
@@ -500,30 +464,7 @@ static void TrkProbe_HandleRxFrame(TrkProbeChannel *channel, const uint8_t *data
   }
 
   channel->status.waiting_reply = 0U;
-
-  switch (data[3])
-  {
-    case (uint8_t)'S':
-      TrkProbe_HandleStatusResponse(channel, data, len);
-      break;
-
-    case (uint8_t)'L':
-      TrkProbe_ParseLiveVolumeResponse(channel, data, len);
-      break;
-
-    case (uint8_t)'R':
-      TrkProbe_ParseLiveMoneyResponse(channel, data, len);
-      break;
-
-    case (uint8_t)'T':
-      TrkProbe_ParseFinalResponse(channel, data, len);
-      break;
-
-    default:
-      ++channel->status.crc_error_count;
-      TrkProbe_RegisterCommFailure(channel);
-      break;
-  }
+  TrkProbe_ApplyProtoEvent(channel, &event);
 }
 
 void TrkProbe_Init(void)

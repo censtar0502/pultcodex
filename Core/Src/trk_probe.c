@@ -1,4 +1,4 @@
-#include "trk_probe.h"
+#include "trk_probe_internal.h"
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -6,114 +6,19 @@
 
 #include "app_log.h"
 #include "eeprom_at24.h"
-#include "usart.h"
-
-#define TRK_PROBE_RX_BUF_SIZE      64U
-#define TRK_PROBE_POLL_MS          300UL
-#define TRK_PROBE_ACTIVE_POLL_MS   120UL
-#define TRK_PROBE_TIMEOUT_MS       150UL
-#define TRK_PROBE_FRAME_LEN        18U
-#define TRK_PROBE_MASK_TRK1        0x01U
-#define TRK_PROBE_MASK_TRK2        0x02U
-#define TRK_PROBE_MASK_TRK3        0x04U
-#define TRK_PROBE_MASK_ALL         0x07U
-
-#define TRK_PROBE_NUM_CHANNELS     2U
-#define TRK_PROBE_MENU_ITEMS       4U
-#define TRK_PROBE_OFFLINE_AFTER_MISSES 5U
-#define TRK_PROBE_PRESET_MONEY_MAX 999999UL
-#define TRK_PROBE_PRESET_VOLUME_CL_MAX 90000UL
-#define TRK_PROBE_NV_MAGIC         0x54524B50UL
-#define TRK_PROBE_NV_VERSION       2U
-#define TRK_PROBE_NV_ADDR          0x0000U
-#define TRK_PROBE_NV_TIMEOUT_MS    20U
-
 /* TRK1=USART3(PD8/PD9), TRK2=USART1(PB6/PB7). */
 #define TRK_PROBE_ACTIVE_MASK      (TRK_PROBE_MASK_TRK1 | TRK_PROBE_MASK_TRK2)
 
-typedef struct
-{
-  UART_HandleTypeDef *huart;
-  uint8_t trk_id;
-  uint8_t addr_hi;
-  uint8_t addr_lo;
-  uint8_t rx_buf[TRK_PROBE_RX_BUF_SIZE];
-  uint8_t frame_buf[8];
-  uint8_t frame_len;
-  uint8_t tx_buf[TRK_PROBE_FRAME_LEN];
-  uint8_t comm_fail_streak;
-  uint8_t live_poll_phase;
-  uint8_t final_request_sent;
-  uint8_t close_request_sent;
-  uint32_t last_poll_tick;
-  uint32_t last_tx_tick;
-  TrkProbeChannelStatus status;
-} TrkProbeChannel;
+TrkProbeChannel trk_channels[TRK_PROBE_NUM_CHANNELS];
+TrkProbeStatus trk_probe_status;
 
-typedef struct
-{
-  uint8_t enabled;
-  uint8_t dispense_mode;
-  uint8_t reserved0;
-  uint8_t reserved1;
-  char price_text[6];
-} TrkProbeNvChannel;
-
-typedef struct
-{
-  uint32_t magic;
-  uint16_t version;
-  uint16_t size;
-  TrkProbeNvChannel channels[TRK_PROBE_NUM_CHANNELS];
-  uint32_t crc32;
-} TrkProbeNvConfig;
-
-static TrkProbeChannel trk_channels[TRK_PROBE_NUM_CHANNELS];
-static TrkProbeStatus trk_probe_status;
-
-static void TrkProbe_HandleStatusResponse(TrkProbeChannel *channel, const uint8_t *data, uint16_t len);
-static uint8_t TrkProbe_HasPendingRxData(const TrkProbeChannel *channel);
-static void TrkProbe_UpdateStateFromStatus(TrkProbeChannel *channel, uint8_t status_raw);
-static void TrkProbe_RefreshUiFlags(void);
-static void TrkProbe_NormalizeActiveSelection(void);
-static void TrkProbe_SyncPublicStatus(TrkProbeChannel *channel);
-static void TrkProbe_SetPriceValue(TrkProbeChannel *channel, uint32_t price_raw, const char *price_text);
 static uint8_t TrkProbe_ParsePriceText(const char *src, uint32_t *price_raw_out);
-static uint8_t TrkProbe_ParsePriceEditValue(const TrkProbeChannel *channel, uint32_t *price_raw_out);
-static TrkProbeChannel *TrkProbe_GetActiveUiChannel(void);
-static TrkProbeChannel *TrkProbe_GetChannelByTrkId(uint8_t trk_id);
-static void TrkProbe_LogPrice(uint8_t trk_id, uint32_t price);
-static uint8_t TrkProbe_IsEnabled(const TrkProbeChannel *channel);
-static uint8_t TrkProbe_CanSelectTrk(uint8_t trk_id);
-static void TrkProbe_SelectTrk(uint8_t trk_id);
-static void TrkProbe_ExitToMain(void);
-static void TrkProbe_SetNotice(const char *text, uint32_t duration_ms);
-static void TrkProbe_CycleDispenseMode(TrkProbeChannel *channel);
-static uint8_t TrkProbe_SendFrame(TrkProbeChannel *channel, const uint8_t *payload, uint16_t payload_len);
-static uint8_t TrkProbe_StartTransaction(TrkProbeChannel *channel);
-static uint8_t TrkProbe_SendSimpleCommand(TrkProbeChannel *channel, char command);
-static void TrkProbe_ClearPreset(TrkProbeChannel *channel);
-static void TrkProbe_ClearFinalDisplay(TrkProbeChannel *channel);
-static void TrkProbe_ClearHeldTransactionDisplay(TrkProbeChannel *channel);
-static void TrkProbe_UpdateFullTankPreset(TrkProbeChannel *channel);
 static uint8_t TrkProbe_ParseMoneyPresetText(const char *src, uint32_t *money_out);
 static uint8_t TrkProbe_ParseVolumePresetText(const char *src, uint32_t *volume_cl_out);
-static uint8_t TrkProbe_UpdatePresetFromBuffer(TrkProbeChannel *channel);
-static void TrkProbe_RecalculatePreset(TrkProbeChannel *channel);
-static void TrkProbe_ResetTransactionRuntime(TrkProbeChannel *channel);
-static void TrkProbe_ParseLiveVolumeResponse(TrkProbeChannel *channel, const uint8_t *data, uint16_t len);
-static void TrkProbe_ParseLiveMoneyResponse(TrkProbeChannel *channel, const uint8_t *data, uint16_t len);
-static void TrkProbe_ParseFinalResponse(TrkProbeChannel *channel, const uint8_t *data, uint16_t len);
-static void TrkProbe_HandleRxFrame(TrkProbeChannel *channel, const uint8_t *data, uint16_t len);
 static uint32_t TrkProbe_Crc32(const void *data, uint32_t len);
-static void TrkProbe_RegisterCommSuccess(TrkProbeChannel *channel);
-static void TrkProbe_RegisterCommFailure(TrkProbeChannel *channel);
-static void TrkProbe_LoadDefaults(void);
 static void TrkProbe_ApplyNvConfig(const TrkProbeNvConfig *config);
-static uint8_t TrkProbe_LoadNvConfig(void);
-static uint8_t TrkProbe_SaveNvConfig(void);
 
-static uint8_t TrkProbe_IsActive(uint8_t trk_id)
+uint8_t TrkProbe_IsActive(uint8_t trk_id)
 {
   if (trk_id == 1U)
   {
@@ -133,20 +38,7 @@ static uint8_t TrkProbe_IsActive(uint8_t trk_id)
   return 0U;
 }
 
-static uint8_t TrkProbe_CalcXor(const uint8_t *data, uint16_t len)
-{
-  uint16_t i;
-  uint8_t crc = 0U;
-
-  for (i = 0U; i < len; ++i)
-  {
-    crc ^= data[i];
-  }
-
-  return crc;
-}
-
-static void TrkProbe_SetAscii(TrkProbeChannelStatus *status, const uint8_t *data, uint16_t len)
+void TrkProbe_SetAscii(TrkProbeChannelStatus *status, const uint8_t *data, uint16_t len)
 {
   uint16_t copy_len;
   uint16_t i;
@@ -166,7 +58,7 @@ static void TrkProbe_SetAscii(TrkProbeChannelStatus *status, const uint8_t *data
   status->last_ascii[copy_len] = '\0';
 }
 
-static void TrkProbe_SetPriceValue(TrkProbeChannel *channel, uint32_t price_raw, const char *price_text)
+void TrkProbe_SetPriceValue(TrkProbeChannel *channel, uint32_t price_raw, const char *price_text)
 {
   char safe_price_text[6];
 
@@ -188,7 +80,7 @@ static void TrkProbe_SetPriceValue(TrkProbeChannel *channel, uint32_t price_raw,
                  safe_price_text);
 }
 
-static void TrkProbe_ClearPreset(TrkProbeChannel *channel)
+void TrkProbe_ClearPreset(TrkProbeChannel *channel)
 {
   if (channel == NULL)
   {
@@ -200,7 +92,7 @@ static void TrkProbe_ClearPreset(TrkProbeChannel *channel)
   channel->status.preset_edit_buf[0] = '\0';
 }
 
-static void TrkProbe_ClearFinalDisplay(TrkProbeChannel *channel)
+void TrkProbe_ClearFinalDisplay(TrkProbeChannel *channel)
 {
   if (channel == NULL)
   {
@@ -213,7 +105,7 @@ static void TrkProbe_ClearFinalDisplay(TrkProbeChannel *channel)
   channel->status.transaction_id = '\0';
 }
 
-static void TrkProbe_ClearHeldTransactionDisplay(TrkProbeChannel *channel)
+void TrkProbe_ClearHeldTransactionDisplay(TrkProbeChannel *channel)
 {
   if (channel == NULL)
   {
@@ -230,7 +122,7 @@ static void TrkProbe_ClearHeldTransactionDisplay(TrkProbeChannel *channel)
   }
 }
 
-static void TrkProbe_ResetTransactionRuntime(TrkProbeChannel *channel)
+void TrkProbe_ResetTransactionRuntime(TrkProbeChannel *channel)
 {
   if (channel == NULL)
   {
@@ -345,7 +237,7 @@ static uint8_t TrkProbe_ParsePriceText(const char *src, uint32_t *price_raw_out)
   return 1U;
 }
 
-static uint8_t TrkProbe_ParsePriceEditValue(const TrkProbeChannel *channel, uint32_t *price_raw_out)
+uint8_t TrkProbe_ParsePriceEditValue(const TrkProbeChannel *channel, uint32_t *price_raw_out)
 {
   if ((channel == NULL) || (price_raw_out == NULL))
   {
@@ -467,7 +359,7 @@ static uint8_t TrkProbe_ParseVolumePresetText(const char *src, uint32_t *volume_
   return 1U;
 }
 
-static void TrkProbe_UpdateFullTankPreset(TrkProbeChannel *channel)
+void TrkProbe_UpdateFullTankPreset(TrkProbeChannel *channel)
 {
   uint32_t volume_cl;
 
@@ -494,7 +386,7 @@ static void TrkProbe_UpdateFullTankPreset(TrkProbeChannel *channel)
   channel->status.preset_volume_cl = volume_cl;
 }
 
-static uint8_t TrkProbe_UpdatePresetFromBuffer(TrkProbeChannel *channel)
+uint8_t TrkProbe_UpdatePresetFromBuffer(TrkProbeChannel *channel)
 {
   uint32_t parsed_value;
 
@@ -546,7 +438,7 @@ static uint8_t TrkProbe_UpdatePresetFromBuffer(TrkProbeChannel *channel)
   return 1U;
 }
 
-static void TrkProbe_RecalculatePreset(TrkProbeChannel *channel)
+void TrkProbe_RecalculatePreset(TrkProbeChannel *channel)
 {
   if (channel == NULL)
   {
@@ -585,7 +477,7 @@ static void TrkProbe_RecalculatePreset(TrkProbeChannel *channel)
   }
 }
 
-static void TrkProbe_LoadDefaults(void)
+void TrkProbe_LoadDefaults(void)
 {
   memset(&trk_channels, 0, sizeof(trk_channels));
   memset(&trk_probe_status, 0, sizeof(trk_probe_status));
@@ -594,6 +486,10 @@ static void TrkProbe_LoadDefaults(void)
   trk_channels[0].trk_id = 1U;
   trk_channels[0].addr_hi = 0x00U;
   trk_channels[0].addr_lo = 0x01U;
+  trk_channels[0].protocol_vtable = &gaskitlink_vtable;
+  trk_channels[0].gaskitlink_ctx.addr_hi = trk_channels[0].addr_hi;
+  trk_channels[0].gaskitlink_ctx.addr_lo = trk_channels[0].addr_lo;
+  trk_channels[0].proto_ctx = &trk_channels[0].gaskitlink_ctx;
   trk_channels[0].status.enabled = 1U;
   trk_channels[0].status.channel_state = (uint8_t)TRK_CHANNEL_OFFLINE;
   trk_channels[0].status.dispense_mode = (uint8_t)TRK_DISPENSE_MODE_MONEY;
@@ -606,6 +502,10 @@ static void TrkProbe_LoadDefaults(void)
   trk_channels[1].trk_id = 2U;
   trk_channels[1].addr_hi = 0x00U;
   trk_channels[1].addr_lo = 0x01U;
+  trk_channels[1].protocol_vtable = &gaskitlink_vtable;
+  trk_channels[1].gaskitlink_ctx.addr_hi = trk_channels[1].addr_hi;
+  trk_channels[1].gaskitlink_ctx.addr_lo = trk_channels[1].addr_lo;
+  trk_channels[1].proto_ctx = &trk_channels[1].gaskitlink_ctx;
   trk_channels[1].status.enabled = 1U;
   trk_channels[1].status.channel_state = (uint8_t)TRK_CHANNEL_OFFLINE;
   trk_channels[1].status.dispense_mode = (uint8_t)TRK_DISPENSE_MODE_MONEY;
@@ -657,7 +557,7 @@ static void TrkProbe_ApplyNvConfig(const TrkProbeNvConfig *config)
   TrkProbe_NormalizeActiveSelection();
 }
 
-static uint8_t TrkProbe_LoadNvConfig(void)
+uint8_t TrkProbe_LoadNvConfig(void)
 {
   TrkProbeNvConfig config;
   uint32_t crc_expected;
@@ -692,7 +592,7 @@ static uint8_t TrkProbe_LoadNvConfig(void)
   return 1U;
 }
 
-static uint8_t TrkProbe_SaveNvConfig(void)
+uint8_t TrkProbe_SaveNvConfig(void)
 {
   TrkProbeNvConfig config;
   uint32_t i;
@@ -730,7 +630,7 @@ static uint8_t TrkProbe_SaveNvConfig(void)
   return 1U;
 }
 
-static void TrkProbe_LogPrice(uint8_t trk_id, uint32_t price)
+void TrkProbe_LogPrice(uint8_t trk_id, uint32_t price)
 {
   char price_text[12];
   char message[48];
@@ -742,7 +642,7 @@ static void TrkProbe_LogPrice(uint8_t trk_id, uint32_t price)
   AppLog_Message(APP_LOG_LEVEL_INFO, trk_labels[idx], message);
 }
 
-static uint8_t TrkProbe_IsEnabled(const TrkProbeChannel *channel)
+uint8_t TrkProbe_IsEnabled(const TrkProbeChannel *channel)
 {
   if (channel == NULL)
   {
@@ -752,7 +652,7 @@ static uint8_t TrkProbe_IsEnabled(const TrkProbeChannel *channel)
   return (channel->status.enabled != 0U) ? 1U : 0U;
 }
 
-static void TrkProbe_RefreshUiFlags(void)
+void TrkProbe_RefreshUiFlags(void)
 {
   uint32_t i;
 
@@ -763,7 +663,7 @@ static void TrkProbe_RefreshUiFlags(void)
   }
 }
 
-static void TrkProbe_NormalizeActiveSelection(void)
+void TrkProbe_NormalizeActiveSelection(void)
 {
   TrkProbeChannel *active = TrkProbe_GetChannelByTrkId(trk_probe_status.active_ui_trk);
   uint32_t i;
@@ -785,7 +685,7 @@ static void TrkProbe_NormalizeActiveSelection(void)
   trk_probe_status.active_ui_trk = trk_channels[0].trk_id;
 }
 
-static TrkProbeChannel *TrkProbe_GetActiveUiChannel(void)
+TrkProbeChannel *TrkProbe_GetActiveUiChannel(void)
 {
   uint32_t i;
 
@@ -812,7 +712,7 @@ static TrkProbeChannel *TrkProbe_GetActiveUiChannel(void)
   return &trk_channels[0];
 }
 
-static TrkProbeChannel *TrkProbe_GetChannelByTrkId(uint8_t trk_id)
+TrkProbeChannel *TrkProbe_GetChannelByTrkId(uint8_t trk_id)
 {
   uint32_t i;
 
@@ -826,6 +726,3 @@ static TrkProbeChannel *TrkProbe_GetChannelByTrkId(uint8_t trk_id)
 
   return NULL;
 }
-
-#include "trk_probe_transport.inc"
-#include "trk_probe_ui.inc"

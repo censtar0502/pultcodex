@@ -16,6 +16,7 @@
 
 1. `CURRENT_STAGE.md`
 2. `WORK_STATUS.md`
+3. `MENU_BACKLOG.md`
 
 Потом уже переходить к основной документации:
 
