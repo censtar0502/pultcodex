@@ -10,6 +10,7 @@
 
 #define TRK_PROBE_RX_BUF_SIZE      64U
 #define TRK_PROBE_POLL_MS          300UL
+#define TRK_PROBE_ACTIVE_POLL_MS   120UL
 #define TRK_PROBE_TIMEOUT_MS       150UL
 #define TRK_PROBE_FRAME_LEN        18U
 #define TRK_PROBE_MASK_TRK1        0x01U
@@ -74,6 +75,7 @@ static void TrkProbe_HandleStatusResponse(TrkProbeChannel *channel, const uint8_
 static uint8_t TrkProbe_HasPendingRxData(const TrkProbeChannel *channel);
 static void TrkProbe_UpdateStateFromStatus(TrkProbeChannel *channel, uint8_t status_raw);
 static void TrkProbe_RefreshUiFlags(void);
+static void TrkProbe_NormalizeActiveSelection(void);
 static void TrkProbe_SyncPublicStatus(TrkProbeChannel *channel);
 static void TrkProbe_SetPriceValue(TrkProbeChannel *channel, uint32_t price_raw, const char *price_text);
 static uint8_t TrkProbe_ParsePriceText(const char *src, uint32_t *price_raw_out);
@@ -623,6 +625,8 @@ static void TrkProbe_ApplyNvConfig(const TrkProbeNvConfig *config)
       }
     }
   }
+
+  TrkProbe_NormalizeActiveSelection();
 }
 
 static uint8_t TrkProbe_LoadNvConfig(void)
@@ -731,6 +735,28 @@ static void TrkProbe_RefreshUiFlags(void)
   }
 }
 
+static void TrkProbe_NormalizeActiveSelection(void)
+{
+  TrkProbeChannel *active = TrkProbe_GetChannelByTrkId(trk_probe_status.active_ui_trk);
+  uint32_t i;
+
+  if ((active != NULL) && (TrkProbe_IsEnabled(active) != 0U))
+  {
+    return;
+  }
+
+  for (i = 0U; i < TRK_PROBE_NUM_CHANNELS; ++i)
+  {
+    if (TrkProbe_IsEnabled(&trk_channels[i]) != 0U)
+    {
+      trk_probe_status.active_ui_trk = trk_channels[i].trk_id;
+      return;
+    }
+  }
+
+  trk_probe_status.active_ui_trk = trk_channels[0].trk_id;
+}
+
 static TrkProbeChannel *TrkProbe_GetActiveUiChannel(void)
 {
   uint32_t i;
@@ -738,6 +764,18 @@ static TrkProbeChannel *TrkProbe_GetActiveUiChannel(void)
   for (i = 0U; i < TRK_PROBE_NUM_CHANNELS; ++i)
   {
     if (trk_channels[i].trk_id == trk_probe_status.active_ui_trk)
+    {
+      if (TrkProbe_IsEnabled(&trk_channels[i]) != 0U)
+      {
+        return &trk_channels[i];
+      }
+      break;
+    }
+  }
+
+  for (i = 0U; i < TRK_PROBE_NUM_CHANNELS; ++i)
+  {
+    if (TrkProbe_IsEnabled(&trk_channels[i]) != 0U)
     {
       return &trk_channels[i];
     }
@@ -792,6 +830,25 @@ static void TrkProbe_SelectTrk(uint8_t trk_id)
   TrkProbe_RefreshUiFlags();
   TrkProbe_SyncPublicStatus(&trk_channels[0]);
   TrkProbe_SyncPublicStatus(&trk_channels[1]);
+}
+
+static uint32_t TrkProbe_GetPollInterval(const TrkProbeChannel *channel)
+{
+  if (channel == NULL)
+  {
+    return TRK_PROBE_POLL_MS;
+  }
+
+  if ((channel->status.channel_state == (uint8_t)TRK_CHANNEL_STARTED) ||
+      (channel->status.channel_state == (uint8_t)TRK_CHANNEL_FUELLING) ||
+      (channel->status.channel_state == (uint8_t)TRK_CHANNEL_PAUSED) ||
+      (channel->status.channel_state == (uint8_t)TRK_CHANNEL_FINISHING) ||
+      (channel->status.channel_state == (uint8_t)TRK_CHANNEL_FINISHED_HOLD))
+  {
+    return TRK_PROBE_ACTIVE_POLL_MS;
+  }
+
+  return TRK_PROBE_POLL_MS;
 }
 
 static void TrkProbe_ExitToMain(void)
@@ -1370,6 +1427,7 @@ void TrkProbe_Init(void)
 
   TrkProbe_LoadDefaults();
   (void)TrkProbe_LoadNvConfig();
+  TrkProbe_NormalizeActiveSelection();
   TrkProbe_RefreshUiFlags();
 
   for (i = 0U; i < TRK_PROBE_NUM_CHANNELS; ++i)
@@ -1427,7 +1485,7 @@ void TrkProbe_Task(void)
 
     if ((channel->status.tx_busy == 0U) &&
         (channel->status.waiting_reply == 0U) &&
-        ((now - channel->last_poll_tick) >= TRK_PROBE_POLL_MS))
+        ((now - channel->last_poll_tick) >= TrkProbe_GetPollInterval(channel)))
     {
       uint8_t sent = 0U;
 
