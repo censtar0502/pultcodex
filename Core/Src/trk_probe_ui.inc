@@ -44,6 +44,21 @@ static void TrkProbe_ExitToMain(void)
   }
 }
 
+static void TrkProbe_ReturnToMenu(void)
+{
+  uint32_t i;
+
+  trk_probe_status.ui_mode = (uint8_t)TRK_UI_MODE_MENU;
+  trk_probe_status.pending_return_to_menu = 0U;
+
+  for (i = 0U; i < TRK_PROBE_NUM_CHANNELS; ++i)
+  {
+    trk_channels[i].status.price_edit_buf[0] = '\0';
+    trk_channels[i].status.totalizer_view = 0U;
+    TrkProbe_SyncPublicStatus(&trk_channels[i]);
+  }
+}
+
 static void TrkProbe_SetNotice(const char *text, uint32_t duration_ms)
 {
   if (text == NULL)
@@ -93,7 +108,6 @@ static void TrkProbe_CycleDispenseMode(TrkProbeChannel *channel)
 void TrkProbe_HandleKey(const KeyboardEvent *event)
 {
   TrkProbeChannel *channel;
-  TrkProbeChannel *target;
   size_t len;
 
   if ((event == NULL) || (event->pressed == 0U))
@@ -296,39 +310,26 @@ void TrkProbe_HandleKey(const KeyboardEvent *event)
       switch (trk_probe_status.menu_index)
       {
         case 0U:
-          target = &trk_channels[0];
-          target->status.enabled = (target->status.enabled == 0U) ? 1U : 0U;
-          if (target->status.enabled != 0U)
-          {
-            TrkProbe_RestartRx(target);
-          }
-          else if (trk_probe_status.active_ui_trk == target->trk_id)
-          {
-            TrkProbe_SelectTrk(2U);
-          }
-          if (TrkProbe_SaveNvConfig() == 0U)
-          {
-            TrkProbe_SetNotice("Save failed", 1200U);
-          }
-          TrkProbe_SyncPublicStatus(target);
+          trk_probe_status.ui_mode = (uint8_t)TRK_UI_MODE_STATUS_VIEW;
           return;
 
         case 1U:
-          target = &trk_channels[1];
-          target->status.enabled = (target->status.enabled == 0U) ? 1U : 0U;
-          if (target->status.enabled != 0U)
+          channel = TrkProbe_GetActiveUiChannel();
+          if ((channel != NULL) && (TrkProbe_IsEnabled(channel) != 0U))
           {
-            TrkProbe_RestartRx(target);
+            trk_probe_status.ui_mode = (uint8_t)TRK_UI_MODE_TOTALS_VIEW;
+            trk_probe_status.active_ui_trk = channel->trk_id;
+            channel->status.totalizer_view = 1U;
+            if (TrkProbe_RequestTotalizer(channel) == 0U)
+            {
+              TrkProbe_SetNotice("Total blocked", 1200U);
+            }
+            else
+            {
+              TrkProbe_SetNotice(NULL, 0U);
+            }
+            TrkProbe_SyncPublicStatus(channel);
           }
-          else if (trk_probe_status.active_ui_trk == target->trk_id)
-          {
-            TrkProbe_SelectTrk(1U);
-          }
-          if (TrkProbe_SaveNvConfig() == 0U)
-          {
-            TrkProbe_SetNotice("Save failed", 1200U);
-          }
-          TrkProbe_SyncPublicStatus(target);
           return;
 
         case 2U:
@@ -343,7 +344,6 @@ void TrkProbe_HandleKey(const KeyboardEvent *event)
           return;
 
         case 3U:
-        default:
           channel = &trk_channels[1];
           channel->status.price_edit_buf[0] = '\0';
           trk_probe_status.ui_mode = (uint8_t)TRK_UI_MODE_EDIT_PRICE;
@@ -353,6 +353,47 @@ void TrkProbe_HandleKey(const KeyboardEvent *event)
           TrkProbe_RefreshUiFlags();
           TrkProbe_SyncPublicStatus(channel);
           return;
+
+        case 4U:
+        default:
+          TrkProbe_SetNotice("Admin later", 1200U);
+          return;
+      }
+    }
+    return;
+  }
+
+  if ((trk_probe_status.ui_mode == (uint8_t)TRK_UI_MODE_STATUS_VIEW) ||
+      (trk_probe_status.ui_mode == (uint8_t)TRK_UI_MODE_TOTALS_VIEW))
+  {
+    if (event->key == 'E')
+    {
+      TrkProbe_ReturnToMenu();
+      return;
+    }
+
+    if ((trk_probe_status.ui_mode == (uint8_t)TRK_UI_MODE_TOTALS_VIEW) &&
+        ((event->key == 'G') || (event->key == 'H')))
+    {
+      uint8_t trk_id = (event->key == 'G') ? 1U : 2U;
+      channel = TrkProbe_GetChannelByTrkId(trk_id);
+      if ((channel != NULL) && (TrkProbe_IsEnabled(channel) != 0U))
+      {
+        trk_probe_status.active_ui_trk = trk_id;
+        trk_channels[0].status.totalizer_view = 0U;
+        trk_channels[1].status.totalizer_view = 0U;
+        channel->status.totalizer_view = 1U;
+        TrkProbe_RefreshUiFlags();
+        if (TrkProbe_RequestTotalizer(channel) == 0U)
+        {
+          TrkProbe_SetNotice("Total blocked", 1200U);
+        }
+        else
+        {
+          TrkProbe_SetNotice(NULL, 0U);
+        }
+        TrkProbe_SyncPublicStatus(&trk_channels[0]);
+        TrkProbe_SyncPublicStatus(&trk_channels[1]);
       }
     }
     return;
@@ -378,7 +419,7 @@ void TrkProbe_HandleKey(const KeyboardEvent *event)
     }
     else
     {
-      trk_probe_status.ui_mode = (uint8_t)TRK_UI_MODE_MENU;
+      TrkProbe_ReturnToMenu();
       channel->status.price_edit_buf[0] = '\0';
     }
     return;

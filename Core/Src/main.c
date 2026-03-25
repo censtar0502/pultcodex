@@ -307,14 +307,12 @@ static void ShowTrkProbeStatus(void)
   }
   else if (status->ui_mode == (uint8_t)TRK_UI_MODE_MENU)
   {
-    SSD1322_DrawString8x8(8U, 0U, "SETUP MENU", 0x0FU);
-    (void)snprintf(line, sizeof(line), "%c TRK1 %s",
-                   (status->menu_index == 0U) ? '>' : ' ',
-                   (status->trk1.enabled != 0U) ? "ON" : "OFF");
+    SSD1322_DrawString8x8(8U, 0U, "USER MENU", 0x0FU);
+    (void)snprintf(line, sizeof(line), "%c STATUS",
+                   (status->menu_index == 0U) ? '>' : ' ');
     SSD1322_DrawString8x8(8U, 16U, line, 0x0FU);
-    (void)snprintf(line, sizeof(line), "%c TRK2 %s",
-                   (status->menu_index == 1U) ? '>' : ' ',
-                   (status->trk2.enabled != 0U) ? "ON" : "OFF");
+    (void)snprintf(line, sizeof(line), "%c TOTALS",
+                   (status->menu_index == 1U) ? '>' : ' ');
     SSD1322_DrawString8x8(8U, 28U, line, 0x0FU);
     (void)snprintf(line, sizeof(line), "%c TRK1 PRICE",
                    (status->menu_index == 2U) ? '>' : ' ');
@@ -322,6 +320,56 @@ static void ShowTrkProbeStatus(void)
     (void)snprintf(line, sizeof(line), "%c TRK2 PRICE",
                    (status->menu_index == 3U) ? '>' : ' ');
     SSD1322_DrawString8x8(8U, 52U, line, 0x0FU);
+    if (status->menu_index == 4U)
+    {
+      SSD1322_DrawString8x8(132U, 52U, ">ADMIN", 0x0FU);
+    }
+  }
+  else if (status->ui_mode == (uint8_t)TRK_UI_MODE_STATUS_VIEW)
+  {
+    SSD1322_DrawString8x8(8U, 0U, "STATUS", 0x0FU);
+    (void)snprintf(line, sizeof(line), "TRK1 %s %c",
+                   (status->trk1.enabled == 0U) ? "OFF" :
+                   ((status->trk1.online == 0U) ? "N/C" : "ON "),
+                   (status->trk1.dispense_mode == (uint8_t)TRK_DISPENSE_MODE_MONEY) ? 'A' :
+                   ((status->trk1.dispense_mode == (uint8_t)TRK_DISPENSE_MODE_VOLUME) ? 'L' : 'H'));
+    SSD1322_DrawString8x8(8U, 16U, line, 0x0FU);
+    (void)snprintf(line, sizeof(line), "S:%c P:%s",
+                   (char)((status->trk1.last_status >= 32U && status->trk1.last_status <= 126U) ? status->trk1.last_status : '-'),
+                   status->trk1.price_text);
+    SSD1322_DrawString8x8(8U, 28U, line, 0x0FU);
+    (void)snprintf(line, sizeof(line), "TRK2 %s %c",
+                   (status->trk2.enabled == 0U) ? "OFF" :
+                   ((status->trk2.online == 0U) ? "N/C" : "ON "),
+                   (status->trk2.dispense_mode == (uint8_t)TRK_DISPENSE_MODE_MONEY) ? 'A' :
+                   ((status->trk2.dispense_mode == (uint8_t)TRK_DISPENSE_MODE_VOLUME) ? 'L' : 'H'));
+    SSD1322_DrawString8x8(8U, 40U, line, 0x0FU);
+    (void)snprintf(line, sizeof(line), "S:%c P:%s",
+                   (char)((status->trk2.last_status >= 32U && status->trk2.last_status <= 126U) ? status->trk2.last_status : '-'),
+                   status->trk2.price_text);
+    SSD1322_DrawString8x8(8U, 52U, line, 0x0FU);
+  }
+  else if (status->ui_mode == (uint8_t)TRK_UI_MODE_TOTALS_VIEW)
+  {
+    const TrkProbeChannelStatus *sum_ch =
+      (status->active_ui_trk == 2U) ? &status->trk2 : &status->trk1;
+    char totalizer_text[20];
+
+    SSD1322_DrawString8x8(8U, 0U, "TOTALS", 0x0FU);
+    (void)snprintf(line, sizeof(line), "TRK%u",
+                   (unsigned int)status->active_ui_trk);
+    SSD1322_DrawString8x8(8U, 16U, line, 0x0FU);
+    if (sum_ch->totalizer_ready != 0U)
+    {
+      FormatVolumeCl(sum_ch->totalizer_volume_cl, totalizer_text, sizeof(totalizer_text));
+      SSD1322_DrawString16x16(8U, 28U, totalizer_text, 0x0FU);
+      SSD1322_DrawString8x8(160U, 40U, "L", 0x0FU);
+    }
+    else
+    {
+      SSD1322_DrawString8x8(8U, 32U, "WAIT...", 0x0FU);
+    }
+    SSD1322_DrawString8x8(8U, 56U, "E BACK G/H TRK", 0x0FU);
   }
   else
   {
