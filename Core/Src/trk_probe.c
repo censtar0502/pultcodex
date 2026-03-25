@@ -93,6 +93,7 @@ static uint8_t TrkProbe_SendFrame(TrkProbeChannel *channel, const uint8_t *paylo
 static uint8_t TrkProbe_StartTransaction(TrkProbeChannel *channel);
 static uint8_t TrkProbe_SendSimpleCommand(TrkProbeChannel *channel, char command);
 static void TrkProbe_ClearPreset(TrkProbeChannel *channel);
+static void TrkProbe_ClearFinalDisplay(TrkProbeChannel *channel);
 static void TrkProbe_ClearHeldTransactionDisplay(TrkProbeChannel *channel);
 static void TrkProbe_UpdateFullTankPreset(TrkProbeChannel *channel);
 static uint8_t TrkProbe_ParseMoneyPresetText(const char *src, uint32_t *money_out);
@@ -199,6 +200,19 @@ static void TrkProbe_ClearPreset(TrkProbeChannel *channel)
   channel->status.preset_edit_buf[0] = '\0';
 }
 
+static void TrkProbe_ClearFinalDisplay(TrkProbeChannel *channel)
+{
+  if (channel == NULL)
+  {
+    return;
+  }
+
+  channel->status.final_data_ready = 0U;
+  channel->status.final_money = 0U;
+  channel->status.final_volume_cl = 0U;
+  channel->status.transaction_id = '\0';
+}
+
 static void TrkProbe_ClearHeldTransactionDisplay(TrkProbeChannel *channel)
 {
   if (channel == NULL)
@@ -211,6 +225,7 @@ static void TrkProbe_ClearHeldTransactionDisplay(TrkProbeChannel *channel)
       (channel->status.channel_state == (uint8_t)TRK_CHANNEL_FINISHED_HOLD))
   {
     TrkProbe_ResetTransactionRuntime(channel);
+    TrkProbe_ClearFinalDisplay(channel);
     TrkProbe_ClearPreset(channel);
   }
 }
@@ -226,12 +241,8 @@ static void TrkProbe_ResetTransactionRuntime(TrkProbeChannel *channel)
   channel->final_request_sent = 0U;
   channel->close_request_sent = 0U;
   channel->status.transaction_pending = 0U;
-  channel->status.final_data_ready = 0U;
-  channel->status.transaction_id = '\0';
   channel->status.live_money = 0U;
   channel->status.live_volume_cl = 0U;
-  channel->status.final_money = 0U;
-  channel->status.final_volume_cl = 0U;
 }
 
 static uint32_t TrkProbe_Crc32(const void *data, uint32_t len)
@@ -1256,15 +1267,12 @@ static uint8_t TrkProbe_StartTransaction(TrkProbeChannel *channel)
   }
 
   channel->status.transaction_pending = 1U;
-  channel->status.final_data_ready = 0U;
   channel->live_poll_phase = 0U;
   channel->final_request_sent = 0U;
   channel->close_request_sent = 0U;
   channel->status.live_money = 0U;
   channel->status.live_volume_cl = 0U;
-  channel->status.final_money = 0U;
-  channel->status.final_volume_cl = 0U;
-  channel->status.transaction_id = '\0';
+  TrkProbe_ClearFinalDisplay(channel);
   channel->status.preset_edit_buf[0] = '\0';
   return 1U;
 }
