@@ -143,6 +143,59 @@ void SSD1322_DrawString8x8(uint16_t x, uint16_t y, const char *s, uint8_t gray4)
   }
 }
 
+void SSD1322_DrawChar16x16(uint16_t x, uint16_t y, char ch, uint8_t gray4)
+{
+  const uint8_t *glyph;
+  uint8_t uch = (uint8_t)ch;
+  uint32_t row;
+  uint32_t col;
+  uint32_t dy;
+  uint32_t dx;
+
+  if (uch < 0x20U || uch > 0x7FU)
+  {
+    uch = 0x20U;
+  }
+
+  glyph = font8x8_basic[uch - 0x20U];
+
+  for (row = 0U; row < 8U; ++row)
+  {
+    uint8_t bits = glyph[row];
+
+    for (col = 0U; col < 8U; ++col)
+    {
+      if ((bits & (1U << (7U - col))) != 0U)
+      {
+        for (dy = 0U; dy < 2U; ++dy)
+        {
+          for (dx = 0U; dx < 2U; ++dx)
+          {
+            SSD1322_DrawPixel((uint16_t)(x + (col * 2U) + dx),
+                              (uint16_t)(y + (row * 2U) + dy),
+                              gray4);
+          }
+        }
+      }
+    }
+  }
+}
+
+void SSD1322_DrawString16x16(uint16_t x, uint16_t y, const char *s, uint8_t gray4)
+{
+  while (*s != '\0')
+  {
+    if (x > (SSD1322_WIDTH - 16U))
+    {
+      break;
+    }
+
+    SSD1322_DrawChar16x16(x, y, *s, gray4);
+    ++s;
+    x = (uint16_t)(x + 16U);
+  }
+}
+
 void SSD1322_Flush(void)
 {
   /* Typical 256x64 SSD1322 modules use this visible RAM window. */

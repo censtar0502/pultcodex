@@ -89,19 +89,61 @@ static const char *ChannelMainText(const TrkProbeChannelStatus *ch)
     return "Not Connect!";
   }
 
-  return "A: 0";
+  switch ((TrkDispenseMode)ch->dispense_mode)
+  {
+    case TRK_DISPENSE_MODE_VOLUME:
+      return "L:0";
+    case TRK_DISPENSE_MODE_FULL:
+      return "H";
+    case TRK_DISPENSE_MODE_MONEY:
+    default:
+      return "A:0";
+  }
+}
+
+static void FormatPriceText(uint32_t price_tenths, char *buf, size_t buf_size)
+{
+  if ((buf == NULL) || (buf_size == 0U))
+  {
+    return;
+  }
+
+  if ((price_tenths % 10U) == 0U)
+  {
+    (void)snprintf(buf, buf_size, "%lu", (unsigned long)(price_tenths / 10U));
+  }
+  else
+  {
+    (void)snprintf(buf,
+                   buf_size,
+                   "%lu.%lu",
+                   (unsigned long)(price_tenths / 10U),
+                   (unsigned long)(price_tenths % 10U));
+  }
 }
 
 static void ShowMainChannelPanel(uint8_t x, const char *label,
                                  const TrkProbeChannelStatus *ch)
 {
   char line[24];
+  const char *main_text = ChannelMainText(ch);
 
   (void)snprintf(line, sizeof(line), "%c%s",
                  (ch->ui_selected != 0U) ? '>' : ' ',
                  label);
   SSD1322_DrawString8x8(x, 0U, line, 0x0FU);
-  SSD1322_DrawString8x8(x, 18U, ChannelMainText(ch), 0x0FU);
+
+  if ((strcmp(main_text, "A:0") == 0) ||
+      (strcmp(main_text, "L:0") == 0) ||
+      (strcmp(main_text, "H") == 0) ||
+      (strcmp(main_text, "Off") == 0))
+  {
+    SSD1322_DrawString16x16(x, 20U, main_text, 0x0FU);
+  }
+  else
+  {
+    SSD1322_DrawString8x8(x, 24U, main_text, 0x0FU);
+  }
 }
 
 static void ShowTrkProbeStatus(void)
@@ -158,14 +200,22 @@ static void ShowTrkProbeStatus(void)
   {
     const TrkProbeChannelStatus *edit_ch =
       (status->active_ui_trk == 2U) ? &status->trk2 : &status->trk1;
+    char old_price[12];
 
     SSD1322_DrawString8x8(8U, 0U, "EDIT PRICE", 0x0FU);
     (void)snprintf(line, sizeof(line), "TRK%u PRICE",
                    (unsigned int)status->active_ui_trk);
     SSD1322_DrawString8x8(8U, 18U, line, 0x0FU);
-    (void)snprintf(line, sizeof(line), "P:%s",
+    FormatPriceText(edit_ch->price, old_price, sizeof(old_price));
+    (void)snprintf(line, sizeof(line), "OLD:%s", old_price);
+    SSD1322_DrawString8x8(8U, 30U, line, 0x0FU);
+    (void)snprintf(line, sizeof(line), "NEW:%s",
                    (edit_ch->price_edit_buf[0] != '\0') ? edit_ch->price_edit_buf : "_");
-    SSD1322_DrawString8x8(8U, 34U, line, 0x0FU);
+    SSD1322_DrawString8x8(8U, 42U, line, 0x0FU);
+    if (status->notice[0] != '\0')
+    {
+      SSD1322_DrawString8x8(120U, 0U, status->notice, 0x0FU);
+    }
     SSD1322_DrawString8x8(8U, 52U, "K SAVE  E CLR", 0x0FU);
   }
 

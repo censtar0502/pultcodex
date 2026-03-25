@@ -31,6 +31,13 @@ typedef enum
   TRK_UI_MODE_EDIT_PRICE
 } TrkUiMode;
 
+typedef enum
+{
+  TRK_DISPENSE_MODE_MONEY = 0,
+  TRK_DISPENSE_MODE_VOLUME,
+  TRK_DISPENSE_MODE_FULL
+} TrkDispenseMode;
+
 typedef struct
 {
   uint32_t tx_count;
@@ -48,6 +55,7 @@ typedef struct
   uint8_t enabled;
   uint32_t price;
   uint8_t channel_state;
+  uint8_t dispense_mode;
   uint8_t ui_selected;
   char price_edit_buf[6];
   char last_ascii[20];
@@ -61,6 +69,9 @@ typedef struct
   uint8_t active_ui_trk;
   uint8_t ui_mode;
   uint8_t menu_index;
+  uint8_t pending_return_to_menu;
+  uint32_t notice_until_ms;
+  char notice[24];
 } TrkProbeStatus;
 
 void TrkProbe_Init(void);
