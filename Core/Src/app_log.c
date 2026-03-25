@@ -7,7 +7,7 @@
 
 #define APP_LOG_ENABLE_GENERAL     1U
 #define APP_LOG_ENABLE_KEYBOARD    1U
-#define APP_LOG_PROTO_MASK         APP_LOG_PROTO_NONE
+#define APP_LOG_PROTO_MASK         APP_LOG_PROTO_BOTH
 #define APP_LOG_PROTO_MAX_BYTES    64U
 
 static const char *AppLog_LevelText(AppLogLevel level)

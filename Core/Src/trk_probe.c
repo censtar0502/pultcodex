@@ -10,7 +10,7 @@
 #define TRK_PROBE_RX_BUF_SIZE      64U
 #define TRK_PROBE_POLL_MS          300UL
 #define TRK_PROBE_TIMEOUT_MS       150UL
-#define TRK_PROBE_FRAME_LEN        5U
+#define TRK_PROBE_FRAME_LEN        18U
 #define TRK_PROBE_STATUS_FRAME_LEN 7U
 #define TRK_PROBE_MASK_TRK1        0x01U
 #define TRK_PROBE_MASK_TRK2        0x02U
@@ -84,6 +84,8 @@ static void TrkProbe_SelectTrk(uint8_t trk_id);
 static void TrkProbe_ExitToMain(void);
 static void TrkProbe_SetNotice(const char *text, uint32_t duration_ms);
 static void TrkProbe_CycleDispenseMode(TrkProbeChannel *channel);
+static uint8_t TrkProbe_SendFrame(TrkProbeChannel *channel, const uint8_t *payload, uint16_t payload_len);
+static uint8_t TrkProbe_StartTransaction(TrkProbeChannel *channel);
 static void TrkProbe_ClearPreset(TrkProbeChannel *channel);
 static void TrkProbe_UpdateFullTankPreset(TrkProbeChannel *channel);
 static uint8_t TrkProbe_ParseMoneyPresetText(const char *src, uint32_t *money_out);
@@ -932,6 +934,7 @@ static void TrkProbe_FeedByte(TrkProbeChannel *channel, uint8_t value)
     channel->status.last_rx_len = channel->frame_len;
     channel->status.last_rx_tick = HAL_GetTick();
     TrkProbe_SetAscii(&channel->status, channel->frame_buf, channel->frame_len);
+    AppLog_ProtoFrame(channel->trk_id, APP_LOG_PROTO_DIR_RX, channel->frame_buf, channel->frame_len);
     TrkProbe_HandleStatusResponse(channel, channel->frame_buf, channel->frame_len);
     channel->frame_len = 0U;
   }
@@ -1047,31 +1050,35 @@ static void TrkProbe_SyncPublicStatus(TrkProbeChannel *channel)
   *TrkProbe_PublicStatus(channel->trk_id) = channel->status;
 }
 
-static void TrkProbe_SendPoll(TrkProbeChannel *channel)
+static uint8_t TrkProbe_SendFrame(TrkProbeChannel *channel, const uint8_t *payload, uint16_t payload_len)
 {
-  if ((channel == NULL) || (channel->huart == NULL))
+  uint16_t i;
+
+  if ((channel == NULL) || (channel->huart == NULL) || (payload == NULL) || (payload_len == 0U))
   {
-    return;
+    return 0U;
   }
 
   if ((TrkProbe_IsActive(channel->trk_id) == 0U) ||
-      (TrkProbe_IsEnabled(channel) == 0U))
+      (TrkProbe_IsEnabled(channel) == 0U) ||
+      (payload_len > (uint16_t)(sizeof(channel->tx_buf) - 2U)))
   {
-    return;
+    return 0U;
   }
 
   channel->tx_buf[0] = 0x02U;
-  channel->tx_buf[1] = channel->addr_hi;
-  channel->tx_buf[2] = channel->addr_lo;
-  channel->tx_buf[3] = (uint8_t)'S';
-  channel->tx_buf[4] = TrkProbe_CalcXor(&channel->tx_buf[1], 3U);
+  for (i = 0U; i < payload_len; ++i)
+  {
+    channel->tx_buf[1U + i] = payload[i];
+  }
+  channel->tx_buf[1U + payload_len] = TrkProbe_CalcXor(&channel->tx_buf[1], payload_len);
 
-  if (HAL_UART_Transmit_DMA(channel->huart, channel->tx_buf, sizeof(channel->tx_buf)) != HAL_OK)
+  if (HAL_UART_Transmit_DMA(channel->huart, channel->tx_buf, (uint16_t)(payload_len + 2U)) != HAL_OK)
   {
     ++channel->status.timeout_count;
     AppLog_Message(APP_LOG_LEVEL_ERROR, "TRK", "TX DMA start failed");
     TrkProbe_SyncPublicStatus(channel);
-    return;
+    return 0U;
   }
 
   channel->status.tx_busy = 1U;
@@ -1079,8 +1086,89 @@ static void TrkProbe_SendPoll(TrkProbeChannel *channel)
   channel->last_tx_tick = HAL_GetTick();
   channel->last_poll_tick = channel->last_tx_tick;
   ++channel->status.tx_count;
-  AppLog_ProtoFrame(channel->trk_id, APP_LOG_PROTO_DIR_TX, channel->tx_buf, sizeof(channel->tx_buf));
+  AppLog_ProtoFrame(channel->trk_id,
+                    APP_LOG_PROTO_DIR_TX,
+                    channel->tx_buf,
+                    (uint16_t)(payload_len + 2U));
   TrkProbe_SyncPublicStatus(channel);
+  return 1U;
+}
+
+static void TrkProbe_SendPoll(TrkProbeChannel *channel)
+{
+  uint8_t payload[3];
+
+  if ((channel == NULL) || (channel->huart == NULL))
+  {
+    return;
+  }
+
+  payload[0] = channel->addr_hi;
+  payload[1] = channel->addr_lo;
+  payload[2] = (uint8_t)'S';
+
+  (void)TrkProbe_SendFrame(channel, payload, sizeof(payload));
+}
+
+static uint8_t TrkProbe_StartTransaction(TrkProbeChannel *channel)
+{
+  uint8_t payload[20];
+  int written;
+
+  if (channel == NULL)
+  {
+    return 0U;
+  }
+
+  if ((channel->status.online == 0U) ||
+      (channel->status.tx_busy != 0U) ||
+      (channel->status.waiting_reply != 0U) ||
+      (channel->status.channel_state != (uint8_t)TRK_CHANNEL_IDLE))
+  {
+    return 0U;
+  }
+
+  if (channel->status.price == 0U)
+  {
+    return 0U;
+  }
+
+  payload[0] = channel->addr_hi;
+  payload[1] = channel->addr_lo;
+
+  if ((TrkDispenseMode)channel->status.dispense_mode == TRK_DISPENSE_MODE_MONEY)
+  {
+    if (channel->status.preset_money == 0U)
+    {
+      return 0U;
+    }
+
+    written = snprintf((char *)&payload[2],
+                       sizeof(payload) - 2U,
+                       "M1;%06lu;%04lu",
+                       (unsigned long)channel->status.preset_money,
+                       (unsigned long)channel->status.price);
+  }
+  else
+  {
+    if (channel->status.preset_volume_cl == 0U)
+    {
+      return 0U;
+    }
+
+    written = snprintf((char *)&payload[2],
+                       sizeof(payload) - 2U,
+                       "V1;%06lu;%04lu",
+                       (unsigned long)channel->status.preset_volume_cl,
+                       (unsigned long)channel->status.price);
+  }
+
+  if ((written <= 0) || ((uint16_t)(2U + written) > (uint16_t)(sizeof(payload) - 1U)))
+  {
+    return 0U;
+  }
+
+  return TrkProbe_SendFrame(channel, payload, (uint16_t)(2U + written));
 }
 
 static void TrkProbe_HandleStatusResponse(TrkProbeChannel *channel, const uint8_t *data, uint16_t len)
@@ -1282,6 +1370,24 @@ void TrkProbe_HandleKey(const KeyboardEvent *event)
         if (TrkProbe_SaveNvConfig() == 0U)
         {
           TrkProbe_SetNotice("Save failed", 1200U);
+        }
+        TrkProbe_SyncPublicStatus(channel);
+      }
+      return;
+    }
+
+    if (event->key == 'K')
+    {
+      channel = TrkProbe_GetActiveUiChannel();
+      if ((channel != NULL) && (TrkProbe_IsEnabled(channel) != 0U))
+      {
+        if (TrkProbe_StartTransaction(channel) != 0U)
+        {
+          TrkProbe_SetNotice("Start sent", 1200U);
+        }
+        else
+        {
+          TrkProbe_SetNotice("Start blocked", 1200U);
         }
         TrkProbe_SyncPublicStatus(channel);
       }
