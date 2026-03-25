@@ -13,6 +13,7 @@ typedef struct
   uint8_t (*build_live_volume_request)(void *proto_ctx, frame_t *frame);
   uint8_t (*build_live_money_request)(void *proto_ctx, frame_t *frame);
   uint8_t (*build_final_request)(void *proto_ctx, frame_t *frame);
+  uint8_t (*build_totalizer_request)(void *proto_ctx, frame_t *frame);
   uint8_t (*build_close_transaction)(void *proto_ctx, frame_t *frame);
   uint8_t (*build_start_money)(void *proto_ctx, uint32_t money, uint32_t price, frame_t *frame);
   uint8_t (*build_start_volume)(void *proto_ctx, uint32_t volume_cl, uint32_t price, frame_t *frame);

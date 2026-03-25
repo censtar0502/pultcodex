@@ -86,9 +86,12 @@ void TrkProbe_FsmApplyProtoEvent(TrkProbeChannel *channel, const proto_event_t *
   }
 
   mapped_state = TrkProbe_FsmMapProtoStatus(event->status);
-  channel->status.last_status = event->status_raw;
-  channel->status.last_nozzle = event->nozzle_raw;
-  channel->status.channel_state = (uint8_t)mapped_state;
+  if (event->kind != PROTO_EVENT_TOTALIZER)
+  {
+    channel->status.last_status = event->status_raw;
+    channel->status.last_nozzle = event->nozzle_raw;
+    channel->status.channel_state = (uint8_t)mapped_state;
+  }
 
   if (event->transaction_id != '\0')
   {
@@ -111,13 +114,19 @@ void TrkProbe_FsmApplyProtoEvent(TrkProbeChannel *channel, const proto_event_t *
       channel->status.final_data_ready = 1U;
       break;
 
+    case PROTO_EVENT_TOTALIZER:
+      channel->status.totalizer_volume_cl = event->volume_cl;
+      channel->status.totalizer_ready = 1U;
+      break;
+
     case PROTO_EVENT_STATUS:
     case PROTO_EVENT_NONE:
     default:
       break;
   }
 
-  if (mapped_state == TRK_CHANNEL_IDLE)
+  if ((event->kind != PROTO_EVENT_TOTALIZER) &&
+      (mapped_state == TRK_CHANNEL_IDLE))
   {
     TrkProbe_ResetTransactionRuntime(channel);
   }

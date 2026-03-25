@@ -192,6 +192,23 @@ static void ShowMainChannelPanel(uint8_t x, const char *label,
 
   if ((ch->enabled != 0U) && (ch->online != 0U))
   {
+    if (ch->totalizer_view != 0U)
+    {
+      char totalizer_text[20];
+
+      (void)snprintf(main_text, sizeof(main_text), "TOT");
+      if (ch->totalizer_ready != 0U)
+      {
+        FormatVolumeCl(ch->totalizer_volume_cl, totalizer_text, sizeof(totalizer_text));
+        (void)snprintf(sub_text, sizeof(sub_text), "%s L", totalizer_text);
+      }
+      else
+      {
+        (void)snprintf(sub_text, sizeof(sub_text), "WAIT...");
+      }
+    }
+    else
+    {
     uint32_t shown_money = ch->preset_money;
     uint32_t shown_volume_cl = ch->preset_volume_cl;
 
@@ -252,13 +269,14 @@ static void ShowMainChannelPanel(uint8_t x, const char *label,
         }
         break;
     }
+    }
   }
   else
   {
     (void)snprintf(main_text, sizeof(main_text), "%s", fallback_text);
   }
 
-  if ((ch->enabled != 0U) && (ch->online != 0U))
+  if ((ch->enabled != 0U) && (ch->online != 0U) && (ch->totalizer_view == 0U))
   {
     SSD1322_DrawString16x16(x, 20U, main_text, 0x0FU);
   }

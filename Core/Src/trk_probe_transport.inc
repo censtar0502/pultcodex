@@ -212,6 +212,17 @@ static uint8_t TrkProbe_SendSimpleCommand(TrkProbeChannel *channel, char command
       }
       break;
 
+    case 'C':
+      if (channel->protocol_vtable->build_totalizer_request == NULL)
+      {
+        return 0U;
+      }
+      if (channel->protocol_vtable->build_totalizer_request(channel->proto_ctx, &frame) == 0U)
+      {
+        return 0U;
+      }
+      break;
+
     case 'N':
       if (channel->protocol_vtable->build_close_transaction == NULL)
       {
@@ -304,6 +315,25 @@ uint8_t TrkProbe_StartTransaction(TrkProbeChannel *channel)
   TrkProbe_ClearFinalDisplay(channel);
   channel->status.preset_edit_buf[0] = '\0';
   return 1U;
+}
+
+uint8_t TrkProbe_RequestTotalizer(TrkProbeChannel *channel)
+{
+  if (channel == NULL)
+  {
+    return 0U;
+  }
+
+  if ((channel->status.online == 0U) ||
+      (channel->status.tx_busy != 0U) ||
+      (channel->status.waiting_reply != 0U) ||
+      (channel->status.channel_state != (uint8_t)TRK_CHANNEL_IDLE))
+  {
+    return 0U;
+  }
+
+  channel->status.totalizer_ready = 0U;
+  return TrkProbe_SendSimpleCommand(channel, 'C');
 }
 
 static void TrkProbe_HandleRxFrame(TrkProbeChannel *channel, const uint8_t *data, uint16_t len)

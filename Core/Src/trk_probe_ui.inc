@@ -103,6 +103,34 @@ void TrkProbe_HandleKey(const KeyboardEvent *event)
 
   if (trk_probe_status.ui_mode == (uint8_t)TRK_UI_MODE_MAIN)
   {
+    channel = TrkProbe_GetActiveUiChannel();
+
+    if ((event->key == 'E') &&
+        (channel != NULL) &&
+        (channel->status.totalizer_view != 0U))
+    {
+      channel->status.totalizer_view = 0U;
+      TrkProbe_SyncPublicStatus(channel);
+      return;
+    }
+
+    if (event->key == 'A')
+    {
+      if ((channel != NULL) &&
+          (TrkProbe_IsEnabled(channel) != 0U) &&
+          (TrkProbe_RequestTotalizer(channel) != 0U))
+      {
+        channel->status.totalizer_view = 1U;
+        TrkProbe_SetNotice(NULL, 0U);
+        TrkProbe_SyncPublicStatus(channel);
+      }
+      else
+      {
+        TrkProbe_SetNotice("Total blocked", 1200U);
+      }
+      return;
+    }
+
     if (event->key == 'F')
     {
       trk_probe_status.ui_mode = (uint8_t)TRK_UI_MODE_MENU;
@@ -114,9 +142,9 @@ void TrkProbe_HandleKey(const KeyboardEvent *event)
 
     if (event->key == 'B')
     {
-      channel = TrkProbe_GetActiveUiChannel();
       if ((channel != NULL) && (TrkProbe_IsEnabled(channel) != 0U))
       {
+        channel->status.totalizer_view = 0U;
         TrkProbe_ClearHeldTransactionDisplay(channel);
         TrkProbe_CycleDispenseMode(channel);
         if (TrkProbe_SaveNvConfig() == 0U)
@@ -130,9 +158,9 @@ void TrkProbe_HandleKey(const KeyboardEvent *event)
 
     if (event->key == 'K')
     {
-      channel = TrkProbe_GetActiveUiChannel();
       if ((channel != NULL) && (TrkProbe_IsEnabled(channel) != 0U))
       {
+        channel->status.totalizer_view = 0U;
         if (TrkProbe_StartTransaction(channel) != 0U)
         {
           TrkProbe_SetNotice("Start sent", 1200U);
@@ -148,7 +176,6 @@ void TrkProbe_HandleKey(const KeyboardEvent *event)
 
     if (event->key == 'E')
     {
-      channel = TrkProbe_GetActiveUiChannel();
       if ((channel != NULL) && (TrkProbe_IsEnabled(channel) != 0U))
       {
         len = strlen(channel->status.preset_edit_buf);
@@ -182,6 +209,7 @@ void TrkProbe_HandleKey(const KeyboardEvent *event)
       {
         char backup[sizeof(channel->status.preset_edit_buf)];
 
+        channel->status.totalizer_view = 0U;
         TrkProbe_ClearHeldTransactionDisplay(channel);
         (void)snprintf(backup, sizeof(backup), "%s", channel->status.preset_edit_buf);
         len = strlen(channel->status.preset_edit_buf);
@@ -211,6 +239,7 @@ void TrkProbe_HandleKey(const KeyboardEvent *event)
           (TrkProbe_IsEnabled(channel) != 0U) &&
           ((TrkDispenseMode)channel->status.dispense_mode == TRK_DISPENSE_MODE_VOLUME))
       {
+        channel->status.totalizer_view = 0U;
         TrkProbe_ClearHeldTransactionDisplay(channel);
         len = strlen(channel->status.preset_edit_buf);
         if ((len > 0U) &&

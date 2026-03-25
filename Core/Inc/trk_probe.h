@@ -61,11 +61,14 @@ typedef struct
   uint32_t live_volume_cl;
   uint32_t final_money;
   uint32_t final_volume_cl;
+  uint32_t totalizer_volume_cl;
   uint8_t channel_state;
   uint8_t dispense_mode;
   uint8_t ui_selected;
   uint8_t transaction_pending;
   uint8_t final_data_ready;
+  uint8_t totalizer_ready;
+  uint8_t totalizer_view;
   char transaction_id;
   char preset_edit_buf[10];
   char price_edit_buf[6];

@@ -97,6 +97,7 @@ TrkProbeChannel *TrkProbe_GetChannelByTrkId(uint8_t trk_id);
 void TrkProbe_RestartRx(TrkProbeChannel *channel);
 void TrkProbe_SyncPublicStatus(TrkProbeChannel *channel);
 uint8_t TrkProbe_StartTransaction(TrkProbeChannel *channel);
+uint8_t TrkProbe_RequestTotalizer(TrkProbeChannel *channel);
 
 #ifdef __cplusplus
 }

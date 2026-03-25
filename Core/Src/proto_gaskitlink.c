@@ -125,6 +125,23 @@ static uint8_t GasKitLink_BuildFinalRequest(void *proto_ctx, frame_t *frame)
   return GasKitLink_BuildSimple((GasKitLinkProtoCtx *)proto_ctx, (uint8_t)'T', frame);
 }
 
+static uint8_t GasKitLink_BuildTotalizerRequest(void *proto_ctx, frame_t *frame)
+{
+  GasKitLinkProtoCtx *ctx = (GasKitLinkProtoCtx *)proto_ctx;
+  uint8_t payload[4];
+
+  if ((ctx == NULL) || (frame == NULL))
+  {
+    return 0U;
+  }
+
+  payload[0] = ctx->addr_hi;
+  payload[1] = ctx->addr_lo;
+  payload[2] = (uint8_t)'C';
+  payload[3] = (uint8_t)'1';
+  return GasKitLink_FillFrame(ctx, payload, sizeof(payload), frame);
+}
+
 static uint8_t GasKitLink_BuildCloseTransaction(void *proto_ctx, frame_t *frame)
 {
   return GasKitLink_BuildSimple((GasKitLinkProtoCtx *)proto_ctx, (uint8_t)'N', frame);
@@ -262,6 +279,17 @@ static uint8_t GasKitLink_ParseResponse(void *proto_ctx,
       event_out->status = GasKitLink_MapStatus(data[6]);
       return 1U;
 
+    case (uint8_t)'C':
+      if ((len < 16U) ||
+          (data[4] != (uint8_t)'1') ||
+          (data[5] != (uint8_t)';') ||
+          (GasKitLink_ParseU32Field(&data[6], 9U, &event_out->volume_cl) == 0U))
+      {
+        return 0U;
+      }
+      event_out->kind = PROTO_EVENT_TOTALIZER;
+      return 1U;
+
     default:
       return 0U;
   }
@@ -273,6 +301,7 @@ const dispenser_protocol_vtable_t gaskitlink_vtable =
   .build_live_volume_request = GasKitLink_BuildLiveVolumeRequest,
   .build_live_money_request = GasKitLink_BuildLiveMoneyRequest,
   .build_final_request = GasKitLink_BuildFinalRequest,
+  .build_totalizer_request = GasKitLink_BuildTotalizerRequest,
   .build_close_transaction = GasKitLink_BuildCloseTransaction,
   .build_start_money = GasKitLink_BuildStartMoney,
   .build_start_volume = GasKitLink_BuildStartVolume,
