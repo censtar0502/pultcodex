@@ -283,6 +283,8 @@ static void ShowTrkProbeStatus(void)
   static TrkProbeStatus last_drawn_status;
   static uint32_t last_draw_ms;
   char line[42];
+  char masked_pin[12];
+  size_t i;
   uint32_t now = HAL_GetTick();
 
   if ((memcmp(&last_drawn_status, status, sizeof(last_drawn_status)) == 0) &&
@@ -310,20 +312,19 @@ static void ShowTrkProbeStatus(void)
     SSD1322_DrawString8x8(8U, 0U, "USER MENU", 0x0FU);
     (void)snprintf(line, sizeof(line), "%c STATUS",
                    (status->menu_index == 0U) ? '>' : ' ');
-    SSD1322_DrawString8x8(8U, 16U, line, 0x0FU);
+    SSD1322_DrawString8x8(8U, 12U, line, 0x0FU);
     (void)snprintf(line, sizeof(line), "%c TOTALS",
                    (status->menu_index == 1U) ? '>' : ' ');
-    SSD1322_DrawString8x8(8U, 28U, line, 0x0FU);
+    SSD1322_DrawString8x8(8U, 22U, line, 0x0FU);
     (void)snprintf(line, sizeof(line), "%c TRK1 PRICE",
                    (status->menu_index == 2U) ? '>' : ' ');
-    SSD1322_DrawString8x8(8U, 40U, line, 0x0FU);
+    SSD1322_DrawString8x8(8U, 32U, line, 0x0FU);
     (void)snprintf(line, sizeof(line), "%c TRK2 PRICE",
                    (status->menu_index == 3U) ? '>' : ' ');
+    SSD1322_DrawString8x8(8U, 42U, line, 0x0FU);
+    (void)snprintf(line, sizeof(line), "%c ADMIN",
+                   (status->menu_index == 4U) ? '>' : ' ');
     SSD1322_DrawString8x8(8U, 52U, line, 0x0FU);
-    if (status->menu_index == 4U)
-    {
-      SSD1322_DrawString8x8(132U, 52U, ">ADMIN", 0x0FU);
-    }
   }
   else if (status->ui_mode == (uint8_t)TRK_UI_MODE_STATUS_VIEW)
   {
@@ -370,6 +371,52 @@ static void ShowTrkProbeStatus(void)
       SSD1322_DrawString8x8(8U, 32U, "WAIT...", 0x0FU);
     }
     SSD1322_DrawString8x8(8U, 56U, "E BACK G/H TRK", 0x0FU);
+  }
+  else if (status->ui_mode == (uint8_t)TRK_UI_MODE_PIN_INPUT)
+  {
+    memset(masked_pin, 0, sizeof(masked_pin));
+    for (i = 0U; (i < strlen(status->admin_pin_edit_buf)) && (i < sizeof(masked_pin) - 1U); ++i)
+    {
+      masked_pin[i] = '*';
+    }
+    if (masked_pin[0] == '\0')
+    {
+      masked_pin[0] = '_';
+      masked_pin[1] = '\0';
+    }
+
+    SSD1322_DrawString8x8(8U, 0U,
+                          (status->admin_pin_change_mode != 0U) ? "NEW ADMIN PIN" : "ADMIN PIN",
+                          0x0FU);
+    SSD1322_DrawString8x8(8U, 18U,
+                          (status->admin_pin_change_mode != 0U) ? "4..8 digits" : "Enter PIN",
+                          0x0FU);
+    (void)snprintf(line, sizeof(line), "PIN:%s", masked_pin);
+    SSD1322_DrawString16x16(8U, 28U, line, 0x0FU);
+    if (status->notice[0] != '\0')
+    {
+      SSD1322_DrawString8x8(120U, 0U, status->notice, 0x0FU);
+    }
+    SSD1322_DrawString8x8(8U, 56U, "K OK  E CLR", 0x0FU);
+  }
+  else if (status->ui_mode == (uint8_t)TRK_UI_MODE_ADMIN_MENU)
+  {
+    SSD1322_DrawString8x8(8U, 0U, "ADMIN MENU", 0x0FU);
+    (void)snprintf(line, sizeof(line), "%c TRK1 %s",
+                   (status->admin_menu_index == 0U) ? '>' : ' ',
+                   (status->trk1.enabled != 0U) ? "ON" : "OFF");
+    SSD1322_DrawString8x8(8U, 16U, line, 0x0FU);
+    (void)snprintf(line, sizeof(line), "%c TRK2 %s",
+                   (status->admin_menu_index == 1U) ? '>' : ' ',
+                   (status->trk2.enabled != 0U) ? "ON" : "OFF");
+    SSD1322_DrawString8x8(8U, 28U, line, 0x0FU);
+    (void)snprintf(line, sizeof(line), "%c CHANGE PIN",
+                   (status->admin_menu_index == 2U) ? '>' : ' ');
+    SSD1322_DrawString8x8(8U, 40U, line, 0x0FU);
+    if (status->notice[0] != '\0')
+    {
+      SSD1322_DrawString8x8(8U, 52U, status->notice, 0x0FU);
+    }
   }
   else
   {

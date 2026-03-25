@@ -59,6 +59,23 @@ static void TrkProbe_ReturnToMenu(void)
   }
 }
 
+static void TrkProbe_ReturnToAdminMenu(void)
+{
+  uint32_t i;
+
+  trk_probe_status.ui_mode = (uint8_t)TRK_UI_MODE_ADMIN_MENU;
+  trk_probe_status.pending_return_to_menu = 0U;
+  trk_probe_status.admin_pin_edit_buf[0] = '\0';
+  trk_probe_status.admin_pin_change_mode = 0U;
+
+  for (i = 0U; i < TRK_PROBE_NUM_CHANNELS; ++i)
+  {
+    trk_channels[i].status.price_edit_buf[0] = '\0';
+    trk_channels[i].status.totalizer_view = 0U;
+    TrkProbe_SyncPublicStatus(&trk_channels[i]);
+  }
+}
+
 static void TrkProbe_SetNotice(const char *text, uint32_t duration_ms)
 {
   if (text == NULL)
@@ -73,6 +90,14 @@ static void TrkProbe_SetNotice(const char *text, uint32_t duration_ms)
                  "%s",
                  text);
   trk_probe_status.notice_until_ms = HAL_GetTick() + duration_ms;
+}
+
+static void TrkProbe_OpenPinInput(uint8_t change_mode)
+{
+  trk_probe_status.ui_mode = (uint8_t)TRK_UI_MODE_PIN_INPUT;
+  trk_probe_status.admin_pin_change_mode = change_mode;
+  trk_probe_status.admin_pin_edit_buf[0] = '\0';
+  TrkProbe_SetNotice(NULL, 0U);
 }
 
 static void TrkProbe_CycleDispenseMode(TrkProbeChannel *channel)
@@ -298,7 +323,7 @@ void TrkProbe_HandleKey(const KeyboardEvent *event)
 
     if (event->key == 'B')
     {
-      if (trk_probe_status.menu_index + 1U < TRK_PROBE_MENU_ITEMS)
+      if (trk_probe_status.menu_index + 1U < TRK_PROBE_USER_MENU_ITEMS)
       {
         ++trk_probe_status.menu_index;
       }
@@ -356,7 +381,151 @@ void TrkProbe_HandleKey(const KeyboardEvent *event)
 
         case 4U:
         default:
-          TrkProbe_SetNotice("Admin later", 1200U);
+          trk_probe_status.admin_menu_index = 0U;
+          TrkProbe_OpenPinInput(0U);
+          return;
+      }
+    }
+    return;
+  }
+
+  if (trk_probe_status.ui_mode == (uint8_t)TRK_UI_MODE_PIN_INPUT)
+  {
+    len = strlen(trk_probe_status.admin_pin_edit_buf);
+
+    if (event->key == 'E')
+    {
+      if (len > 0U)
+      {
+        trk_probe_status.admin_pin_edit_buf[len - 1U] = '\0';
+      }
+      else if (trk_probe_status.admin_pin_change_mode != 0U)
+      {
+        TrkProbe_ReturnToAdminMenu();
+      }
+      else
+      {
+        TrkProbe_ReturnToMenu();
+      }
+      return;
+    }
+
+    if (event->key == 'K')
+    {
+      if (trk_probe_status.admin_pin_change_mode != 0U)
+      {
+        if (TrkProbe_IsValidAdminPin(trk_probe_status.admin_pin_edit_buf) == 0U)
+        {
+          TrkProbe_SetNotice("Bad new PIN", 1200U);
+          return;
+        }
+
+        if (TrkProbe_SetAdminPin(trk_probe_status.admin_pin_edit_buf) != 0U)
+        {
+          TrkProbe_SetNotice("PIN saved", 1200U);
+          TrkProbe_ReturnToAdminMenu();
+        }
+        else
+        {
+          TrkProbe_SetNotice("Save failed", 1200U);
+        }
+      }
+      else
+      {
+        if (TrkProbe_CheckAdminPin(trk_probe_status.admin_pin_edit_buf) != 0U)
+        {
+          trk_probe_status.ui_mode = (uint8_t)TRK_UI_MODE_ADMIN_MENU;
+          trk_probe_status.admin_pin_edit_buf[0] = '\0';
+          trk_probe_status.admin_pin_change_mode = 0U;
+          TrkProbe_SetNotice("Admin OK", 1200U);
+        }
+        else
+        {
+          trk_probe_status.admin_pin_edit_buf[0] = '\0';
+          TrkProbe_SetNotice("Bad PIN", 1200U);
+        }
+      }
+      return;
+    }
+
+    if ((event->key >= '0') && (event->key <= '9'))
+    {
+      if (len < (sizeof(trk_probe_status.admin_pin_edit_buf) - 1U))
+      {
+        trk_probe_status.admin_pin_edit_buf[len] = event->key;
+        trk_probe_status.admin_pin_edit_buf[len + 1U] = '\0';
+      }
+      return;
+    }
+
+    return;
+  }
+
+  if (trk_probe_status.ui_mode == (uint8_t)TRK_UI_MODE_ADMIN_MENU)
+  {
+    if (event->key == 'E')
+    {
+      TrkProbe_ReturnToMenu();
+      return;
+    }
+
+    if (event->key == 'A')
+    {
+      if (trk_probe_status.admin_menu_index > 0U)
+      {
+        --trk_probe_status.admin_menu_index;
+      }
+      return;
+    }
+
+    if (event->key == 'B')
+    {
+      if (trk_probe_status.admin_menu_index + 1U < TRK_PROBE_ADMIN_MENU_ITEMS)
+      {
+        ++trk_probe_status.admin_menu_index;
+      }
+      return;
+    }
+
+    if (event->key == 'K')
+    {
+      switch (trk_probe_status.admin_menu_index)
+      {
+        case 0U:
+          trk_channels[0].status.enabled = (trk_channels[0].status.enabled == 0U) ? 1U : 0U;
+          TrkProbe_NormalizeActiveSelection();
+          TrkProbe_RefreshUiFlags();
+          if (TrkProbe_SaveNvConfig() != 0U)
+          {
+            TrkProbe_SetNotice((trk_channels[0].status.enabled != 0U) ? "TRK1 ON" : "TRK1 OFF", 1200U);
+          }
+          else
+          {
+            TrkProbe_SetNotice("Save failed", 1200U);
+          }
+          TrkProbe_SyncPublicStatus(&trk_channels[0]);
+          TrkProbe_SyncPublicStatus(&trk_channels[1]);
+          return;
+
+        case 1U:
+          trk_channels[1].status.enabled = (trk_channels[1].status.enabled == 0U) ? 1U : 0U;
+          TrkProbe_NormalizeActiveSelection();
+          TrkProbe_RefreshUiFlags();
+          if (TrkProbe_SaveNvConfig() != 0U)
+          {
+            TrkProbe_SetNotice((trk_channels[1].status.enabled != 0U) ? "TRK2 ON" : "TRK2 OFF", 1200U);
+          }
+          else
+          {
+            TrkProbe_SetNotice("Save failed", 1200U);
+          }
+          TrkProbe_SyncPublicStatus(&trk_channels[0]);
+          TrkProbe_SyncPublicStatus(&trk_channels[1]);
+          return;
+
+        case 2U:
+        default:
+          TrkProbe_OpenPinInput(1U);
           return;
       }
     }

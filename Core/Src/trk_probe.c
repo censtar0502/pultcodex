@@ -15,8 +15,13 @@ TrkProbeStatus trk_probe_status;
 static uint8_t TrkProbe_ParsePriceText(const char *src, uint32_t *price_raw_out);
 static uint8_t TrkProbe_ParseMoneyPresetText(const char *src, uint32_t *money_out);
 static uint8_t TrkProbe_ParseVolumePresetText(const char *src, uint32_t *volume_cl_out);
+static uint8_t TrkProbe_ParseAdminPinText(const char *src);
 static uint32_t TrkProbe_Crc32(const void *data, uint32_t len);
 static void TrkProbe_ApplyNvConfig(const TrkProbeNvConfig *config);
+static void TrkProbe_SetDefaultAdminPin(void);
+
+static char trk_probe_admin_pin[9];
+static const char trk_probe_master_pin[] = "88991122";
 
 uint8_t TrkProbe_IsActive(uint8_t trk_id)
 {
@@ -235,6 +240,33 @@ static uint8_t TrkProbe_ParsePriceText(const char *src, uint32_t *price_raw_out)
 
   *price_raw_out = price_raw;
   return 1U;
+}
+
+static uint8_t TrkProbe_ParseAdminPinText(const char *src)
+{
+  uint32_t len = 0U;
+
+  if (src == NULL)
+  {
+    return 0U;
+  }
+
+  while (*src != '\0')
+  {
+    if ((*src < '0') || (*src > '9'))
+    {
+      return 0U;
+    }
+
+    ++len;
+    if (len > 8U)
+    {
+      return 0U;
+    }
+    ++src;
+  }
+
+  return (len >= 4U) ? 1U : 0U;
 }
 
 uint8_t TrkProbe_ParsePriceEditValue(const TrkProbeChannel *channel, uint32_t *price_raw_out)
@@ -481,6 +513,7 @@ void TrkProbe_LoadDefaults(void)
 {
   memset(&trk_channels, 0, sizeof(trk_channels));
   memset(&trk_probe_status, 0, sizeof(trk_probe_status));
+  TrkProbe_SetDefaultAdminPin();
 
   trk_channels[0].huart = &huart3;
   trk_channels[0].trk_id = 1U;
@@ -517,7 +550,18 @@ void TrkProbe_LoadDefaults(void)
   trk_probe_status.active_ui_trk = 1U;
   trk_probe_status.ui_mode = (uint8_t)TRK_UI_MODE_MAIN;
   trk_probe_status.menu_index = 0U;
+  trk_probe_status.admin_menu_index = 0U;
+  trk_probe_status.admin_pin_change_mode = 0U;
   trk_probe_status.pending_return_to_menu = 0U;
+  trk_probe_status.admin_pin_edit_buf[0] = '\0';
+}
+
+static void TrkProbe_SetDefaultAdminPin(void)
+{
+  (void)snprintf(trk_probe_admin_pin,
+                 sizeof(trk_probe_admin_pin),
+                 "%s",
+                 "123456");
 }
 
 static void TrkProbe_ApplyNvConfig(const TrkProbeNvConfig *config)
@@ -554,13 +598,28 @@ static void TrkProbe_ApplyNvConfig(const TrkProbeNvConfig *config)
     }
   }
 
+  if (TrkProbe_ParseAdminPinText(config->admin_pin) != 0U)
+  {
+    (void)snprintf(trk_probe_admin_pin,
+                   sizeof(trk_probe_admin_pin),
+                   "%s",
+                   config->admin_pin);
+  }
+  else
+  {
+    TrkProbe_SetDefaultAdminPin();
+  }
+
   TrkProbe_NormalizeActiveSelection();
 }
 
 uint8_t TrkProbe_LoadNvConfig(void)
 {
+  TrkProbeNvHeader header;
   TrkProbeNvConfig config;
+  TrkProbeNvConfigV2 config_v2;
   uint32_t crc_expected;
+  uint32_t i;
 
   if (AT24_DetectAddress() != HAL_OK)
   {
@@ -568,28 +627,88 @@ uint8_t TrkProbe_LoadNvConfig(void)
   }
 
   if (AT24_Read(TRK_PROBE_NV_ADDR,
-                (uint8_t *)&config,
-                (uint16_t)sizeof(config),
+                (uint8_t *)&header,
+                (uint16_t)sizeof(header),
                 TRK_PROBE_NV_TIMEOUT_MS) != HAL_OK)
   {
     return 0U;
   }
 
-  if ((config.magic != TRK_PROBE_NV_MAGIC) ||
-      (config.version != TRK_PROBE_NV_VERSION) ||
-      (config.size != (uint16_t)sizeof(config)))
+  if (header.magic != TRK_PROBE_NV_MAGIC)
   {
     return 0U;
   }
 
-  crc_expected = TrkProbe_Crc32(&config, (uint32_t)(sizeof(config) - sizeof(config.crc32)));
-  if (crc_expected != config.crc32)
+  if ((header.version == TRK_PROBE_NV_VERSION) &&
+      (header.size == (uint16_t)sizeof(config)))
   {
-    return 0U;
+    if (AT24_Read(TRK_PROBE_NV_ADDR,
+                  (uint8_t *)&config,
+                  (uint16_t)sizeof(config),
+                  TRK_PROBE_NV_TIMEOUT_MS) != HAL_OK)
+    {
+      return 0U;
+    }
+
+    crc_expected = TrkProbe_Crc32(&config, (uint32_t)(sizeof(config) - sizeof(config.crc32)));
+    if (crc_expected != config.crc32)
+    {
+      return 0U;
+    }
+
+    TrkProbe_ApplyNvConfig(&config);
+    return 1U;
   }
 
-  TrkProbe_ApplyNvConfig(&config);
-  return 1U;
+  if ((header.version == 2U) &&
+      (header.size == (uint16_t)sizeof(config_v2)))
+  {
+    if (AT24_Read(TRK_PROBE_NV_ADDR,
+                  (uint8_t *)&config_v2,
+                  (uint16_t)sizeof(config_v2),
+                  TRK_PROBE_NV_TIMEOUT_MS) != HAL_OK)
+    {
+      return 0U;
+    }
+
+    crc_expected = TrkProbe_Crc32(&config_v2,
+                                  (uint32_t)(sizeof(config_v2) - sizeof(config_v2.crc32)));
+    if (crc_expected != config_v2.crc32)
+    {
+      return 0U;
+    }
+
+    for (i = 0U; i < TRK_PROBE_NUM_CHANNELS; ++i)
+    {
+      trk_channels[i].status.enabled = (config_v2.channels[i].enabled != 0U) ? 1U : 0U;
+
+      {
+        uint32_t price_raw;
+
+        if (TrkProbe_ParsePriceText(config_v2.channels[i].price_text, &price_raw) != 0U)
+        {
+          TrkProbe_SetPriceValue(&trk_channels[i],
+                                 price_raw,
+                                 config_v2.channels[i].price_text);
+        }
+      }
+
+      if (config_v2.channels[i].dispense_mode <= (uint8_t)TRK_DISPENSE_MODE_FULL)
+      {
+        trk_channels[i].status.dispense_mode = config_v2.channels[i].dispense_mode;
+        if ((TrkDispenseMode)trk_channels[i].status.dispense_mode == TRK_DISPENSE_MODE_FULL)
+        {
+          TrkProbe_UpdateFullTankPreset(&trk_channels[i]);
+        }
+      }
+    }
+
+    TrkProbe_SetDefaultAdminPin();
+    TrkProbe_NormalizeActiveSelection();
+    return 1U;
+  }
+
+  return 0U;
 }
 
 uint8_t TrkProbe_SaveNvConfig(void)
@@ -616,6 +735,10 @@ uint8_t TrkProbe_SaveNvConfig(void)
                    "%s",
                    trk_channels[i].status.price_text);
   }
+  (void)snprintf(config.admin_pin,
+                 sizeof(config.admin_pin),
+                 "%s",
+                 trk_probe_admin_pin);
 
   config.crc32 = TrkProbe_Crc32(&config, (uint32_t)(sizeof(config) - sizeof(config.crc32)));
 
@@ -628,6 +751,45 @@ uint8_t TrkProbe_SaveNvConfig(void)
   }
 
   return 1U;
+}
+
+uint8_t TrkProbe_IsValidAdminPin(const char *pin_text)
+{
+  return TrkProbe_ParseAdminPinText(pin_text);
+}
+
+uint8_t TrkProbe_CheckAdminPin(const char *pin_text)
+{
+  if (TrkProbe_ParseAdminPinText(pin_text) == 0U)
+  {
+    return 0U;
+  }
+
+  if (strcmp(pin_text, trk_probe_admin_pin) == 0)
+  {
+    return 1U;
+  }
+
+  if (strcmp(pin_text, trk_probe_master_pin) == 0)
+  {
+    return 1U;
+  }
+
+  return 0U;
+}
+
+uint8_t TrkProbe_SetAdminPin(const char *pin_text)
+{
+  if (TrkProbe_ParseAdminPinText(pin_text) == 0U)
+  {
+    return 0U;
+  }
+
+  (void)snprintf(trk_probe_admin_pin,
+                 sizeof(trk_probe_admin_pin),
+                 "%s",
+                 pin_text);
+  return TrkProbe_SaveNvConfig();
 }
 
 void TrkProbe_LogPrice(uint8_t trk_id, uint32_t price)

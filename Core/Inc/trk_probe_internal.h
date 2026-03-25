@@ -21,12 +21,13 @@ extern "C" {
 #define TRK_PROBE_MASK_ALL         0x07U
 
 #define TRK_PROBE_NUM_CHANNELS     2U
-#define TRK_PROBE_MENU_ITEMS       5U
+#define TRK_PROBE_USER_MENU_ITEMS  5U
+#define TRK_PROBE_ADMIN_MENU_ITEMS 3U
 #define TRK_PROBE_OFFLINE_AFTER_MISSES 5U
 #define TRK_PROBE_PRESET_MONEY_MAX 999999UL
 #define TRK_PROBE_PRESET_VOLUME_CL_MAX 90000UL
 #define TRK_PROBE_NV_MAGIC         0x54524B50UL
-#define TRK_PROBE_NV_VERSION       2U
+#define TRK_PROBE_NV_VERSION       3U
 #define TRK_PROBE_NV_ADDR          0x0000U
 #define TRK_PROBE_NV_TIMEOUT_MS    20U
 
@@ -66,7 +67,24 @@ typedef struct
   uint32_t magic;
   uint16_t version;
   uint16_t size;
+} TrkProbeNvHeader;
+
+typedef struct
+{
+  uint32_t magic;
+  uint16_t version;
+  uint16_t size;
   TrkProbeNvChannel channels[TRK_PROBE_NUM_CHANNELS];
+  uint32_t crc32;
+} TrkProbeNvConfigV2;
+
+typedef struct
+{
+  uint32_t magic;
+  uint16_t version;
+  uint16_t size;
+  TrkProbeNvChannel channels[TRK_PROBE_NUM_CHANNELS];
+  char admin_pin[9];
   uint32_t crc32;
 } TrkProbeNvConfig;
 
@@ -87,6 +105,9 @@ void TrkProbe_RecalculatePreset(TrkProbeChannel *channel);
 void TrkProbe_LoadDefaults(void);
 uint8_t TrkProbe_LoadNvConfig(void);
 uint8_t TrkProbe_SaveNvConfig(void);
+uint8_t TrkProbe_IsValidAdminPin(const char *pin_text);
+uint8_t TrkProbe_CheckAdminPin(const char *pin_text);
+uint8_t TrkProbe_SetAdminPin(const char *pin_text);
 void TrkProbe_LogPrice(uint8_t trk_id, uint32_t price);
 uint8_t TrkProbe_IsEnabled(const TrkProbeChannel *channel);
 void TrkProbe_RefreshUiFlags(void);

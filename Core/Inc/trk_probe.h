@@ -30,7 +30,9 @@ typedef enum
   TRK_UI_MODE_MENU,
   TRK_UI_MODE_EDIT_PRICE,
   TRK_UI_MODE_STATUS_VIEW,
-  TRK_UI_MODE_TOTALS_VIEW
+  TRK_UI_MODE_TOTALS_VIEW,
+  TRK_UI_MODE_PIN_INPUT,
+  TRK_UI_MODE_ADMIN_MENU
 } TrkUiMode;
 
 typedef enum
@@ -85,9 +87,12 @@ typedef struct
   uint8_t active_ui_trk;
   uint8_t ui_mode;
   uint8_t menu_index;
+  uint8_t admin_menu_index;
+  uint8_t admin_pin_change_mode;
   uint8_t pending_return_to_menu;
   uint32_t notice_until_ms;
   char notice[24];
+  char admin_pin_edit_buf[9];
 } TrkProbeStatus;
 
 void TrkProbe_Init(void);
