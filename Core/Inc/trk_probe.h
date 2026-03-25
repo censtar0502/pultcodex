@@ -100,6 +100,7 @@ void TrkProbe_Task(void);
 void TrkProbe_HandleKey(const KeyboardEvent *event);
 void TrkProbe_OnRxEvent(UART_HandleTypeDef *huart, uint16_t size);
 void TrkProbe_OnTxCplt(UART_HandleTypeDef *huart);
+void TrkProbe_On1msTick(void);
 const TrkProbeStatus *TrkProbe_GetStatus(void);
 
 #ifdef __cplusplus

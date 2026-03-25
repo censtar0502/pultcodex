@@ -19,9 +19,13 @@ static uint8_t TrkProbe_ParseAdminPinText(const char *src);
 static uint32_t TrkProbe_Crc32(const void *data, uint32_t len);
 static void TrkProbe_ApplyNvConfig(const TrkProbeNvConfig *config);
 static void TrkProbe_SetDefaultAdminPin(void);
+static void TrkProbe_BuildNvConfig(TrkProbeNvConfig *config);
 
 static char trk_probe_admin_pin[9];
 static const char trk_probe_master_pin[] = "88991122";
+static TrkProbeNvConfig trk_probe_nv_shadow;
+static uint8_t trk_probe_nv_dirty;
+static uint32_t trk_probe_nv_retry_tick;
 
 uint8_t TrkProbe_IsActive(uint8_t trk_id)
 {
@@ -613,6 +617,37 @@ static void TrkProbe_ApplyNvConfig(const TrkProbeNvConfig *config)
   TrkProbe_NormalizeActiveSelection();
 }
 
+static void TrkProbe_BuildNvConfig(TrkProbeNvConfig *config)
+{
+  uint32_t i;
+
+  if (config == NULL)
+  {
+    return;
+  }
+
+  memset(config, 0, sizeof(*config));
+  config->magic = TRK_PROBE_NV_MAGIC;
+  config->version = TRK_PROBE_NV_VERSION;
+  config->size = (uint16_t)sizeof(*config);
+
+  for (i = 0U; i < TRK_PROBE_NUM_CHANNELS; ++i)
+  {
+    config->channels[i].enabled = trk_channels[i].status.enabled;
+    config->channels[i].dispense_mode = trk_channels[i].status.dispense_mode;
+    (void)snprintf(config->channels[i].price_text,
+                   sizeof(config->channels[i].price_text),
+                   "%s",
+                   trk_channels[i].status.price_text);
+  }
+
+  (void)snprintf(config->admin_pin,
+                 sizeof(config->admin_pin),
+                 "%s",
+                 trk_probe_admin_pin);
+  config->crc32 = TrkProbe_Crc32(config, (uint32_t)(sizeof(*config) - sizeof(config->crc32)));
+}
+
 uint8_t TrkProbe_LoadNvConfig(void)
 {
   TrkProbeNvHeader header;
@@ -713,44 +748,40 @@ uint8_t TrkProbe_LoadNvConfig(void)
 
 uint8_t TrkProbe_SaveNvConfig(void)
 {
-  TrkProbeNvConfig config;
-  uint32_t i;
-
-  if (AT24_DetectAddress() != HAL_OK)
-  {
-    return 0U;
-  }
-
-  memset(&config, 0, sizeof(config));
-  config.magic = TRK_PROBE_NV_MAGIC;
-  config.version = TRK_PROBE_NV_VERSION;
-  config.size = (uint16_t)sizeof(config);
-
-  for (i = 0U; i < TRK_PROBE_NUM_CHANNELS; ++i)
-  {
-    config.channels[i].enabled = trk_channels[i].status.enabled;
-    config.channels[i].dispense_mode = trk_channels[i].status.dispense_mode;
-    (void)snprintf(config.channels[i].price_text,
-                   sizeof(config.channels[i].price_text),
-                   "%s",
-                   trk_channels[i].status.price_text);
-  }
-  (void)snprintf(config.admin_pin,
-                 sizeof(config.admin_pin),
-                 "%s",
-                 trk_probe_admin_pin);
-
-  config.crc32 = TrkProbe_Crc32(&config, (uint32_t)(sizeof(config) - sizeof(config.crc32)));
-
-  if (AT24_Write(TRK_PROBE_NV_ADDR,
-                 (const uint8_t *)&config,
-                 (uint16_t)sizeof(config),
-                 TRK_PROBE_NV_TIMEOUT_MS) != HAL_OK)
-  {
-    return 0U;
-  }
-
+  TrkProbe_BuildNvConfig(&trk_probe_nv_shadow);
+  trk_probe_nv_dirty = 1U;
+  trk_probe_nv_retry_tick = HAL_GetTick();
   return 1U;
+}
+
+void TrkProbe_NvServiceInit(void)
+{
+  AT24_Service_Init();
+  trk_probe_nv_dirty = 0U;
+  trk_probe_nv_retry_tick = 0U;
+}
+
+void TrkProbe_NvServiceTask(void)
+{
+  AT24_Service_Task();
+
+  if ((trk_probe_nv_dirty == 0U) ||
+      (AT24_Service_IsBusy() != 0U) ||
+      ((int32_t)(HAL_GetTick() - trk_probe_nv_retry_tick) < 0))
+  {
+    return;
+  }
+
+  if (AT24_WriteAsync(TRK_PROBE_NV_ADDR,
+                      (const uint8_t *)&trk_probe_nv_shadow,
+                      (uint16_t)sizeof(trk_probe_nv_shadow)) == HAL_OK)
+  {
+    trk_probe_nv_dirty = 0U;
+  }
+  else
+  {
+    trk_probe_nv_retry_tick = HAL_GetTick() + 250U;
+  }
 }
 
 uint8_t TrkProbe_IsValidAdminPin(const char *pin_text)

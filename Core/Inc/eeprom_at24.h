@@ -17,6 +17,13 @@ HAL_StatusTypeDef AT24_DetectAddress(void);
 HAL_StatusTypeDef AT24_IsReady(uint32_t trials, uint32_t timeout_ms);
 HAL_StatusTypeDef AT24_Read(uint16_t mem_addr, uint8_t *data, uint16_t size, uint32_t timeout_ms);
 HAL_StatusTypeDef AT24_Write(uint16_t mem_addr, const uint8_t *data, uint16_t size, uint32_t timeout_ms);
+void AT24_Service_Init(void);
+void AT24_Service_Task(void);
+uint8_t AT24_Service_IsBusy(void);
+HAL_StatusTypeDef AT24_WriteAsync(uint16_t mem_addr, const uint8_t *data, uint16_t size);
+void AT24_OnMemTxCplt(I2C_HandleTypeDef *hi2c);
+void AT24_OnMemRxCplt(I2C_HandleTypeDef *hi2c);
+void AT24_OnError(I2C_HandleTypeDef *hi2c);
 
 #ifdef __cplusplus
 }

@@ -1,4 +1,6 @@
 static void TrkProbe_HandleRxFrame(TrkProbeChannel *channel, const uint8_t *data, uint16_t len);
+static void TrkProbe_ProcessPendingFrames(void);
+static volatile uint32_t trk_probe_time_1ms;
 
 static void TrkProbe_ProcessChunk(TrkProbeChannel *channel, const uint8_t *data, uint16_t len)
 {
@@ -47,6 +49,18 @@ static void TrkProbe_StartRx(TrkProbeChannel *channel)
   __HAL_DMA_DISABLE_IT(channel->huart->hdmarx, DMA_IT_HT);
 }
 
+static void TrkProbe_RearmRx(TrkProbeChannel *channel)
+{
+  if ((channel == NULL) || (channel->huart == NULL))
+  {
+    return;
+  }
+
+  (void)HAL_UART_DMAStop(channel->huart);
+  memset(channel->rx_buf, 0, sizeof(channel->rx_buf));
+  TrkProbe_StartRx(channel);
+}
+
 void TrkProbe_RestartRx(TrkProbeChannel *channel)
 {
   if ((channel == NULL) || (channel->huart == NULL))
@@ -55,9 +69,8 @@ void TrkProbe_RestartRx(TrkProbeChannel *channel)
   }
 
   channel->frame_len = 0U;
-  (void)HAL_UART_DMAStop(channel->huart);
-  memset(channel->rx_buf, 0, sizeof(channel->rx_buf));
-  TrkProbe_StartRx(channel);
+  channel->frame_deadline_tick_1ms = 0U;
+  TrkProbe_RearmRx(channel);
 }
 
 static uint8_t TrkProbe_HasPendingRxData(const TrkProbeChannel *channel)
@@ -375,6 +388,7 @@ void TrkProbe_Init(void)
 {
   uint32_t i;
 
+  TrkProbe_NvServiceInit();
   TrkProbe_LoadDefaults();
   (void)TrkProbe_LoadNvConfig();
   TrkProbe_NormalizeActiveSelection();
@@ -394,6 +408,9 @@ void TrkProbe_Task(void)
 {
   uint32_t now = HAL_GetTick();
   uint32_t i;
+
+  TrkProbe_ProcessPendingFrames();
+  TrkProbe_NvServiceTask();
 
   for (i = 0U; i < TRK_PROBE_NUM_CHANNELS; ++i)
   {
@@ -533,8 +550,22 @@ void TrkProbe_OnRxEvent(UART_HandleTypeDef *huart, uint16_t size)
     size = TRK_PROBE_RX_BUF_SIZE;
   }
 
-  TrkProbe_ProcessChunk(channel, channel->rx_buf, size);
-  TrkProbe_RestartRx(channel);
+  if (((uint16_t)channel->frame_len + size) > TRK_PROBE_RX_BUF_SIZE)
+  {
+    channel->frame_len = 0U;
+    channel->status.waiting_reply = 0U;
+    ++channel->status.crc_error_count;
+    TrkProbe_FsmOnCommFailure(channel);
+    TrkProbe_RestartRx(channel);
+    TrkProbe_SyncPublicStatus(channel);
+    return;
+  }
+
+  memcpy(&channel->frame_buf[channel->frame_len], channel->rx_buf, size);
+  channel->frame_len = (uint8_t)(channel->frame_len + size);
+  channel->frame_deadline_tick_1ms = trk_probe_time_1ms + 3U;
+  channel->status.last_rx_tick = HAL_GetTick();
+  TrkProbe_RearmRx(channel);
   TrkProbe_SyncPublicStatus(channel);
 }
 
@@ -554,6 +585,35 @@ void TrkProbe_OnTxCplt(UART_HandleTypeDef *huart)
 
   channel->status.tx_busy = 0U;
   TrkProbe_SyncPublicStatus(channel);
+}
+
+void TrkProbe_On1msTick(void)
+{
+  ++trk_probe_time_1ms;
+}
+
+static void TrkProbe_ProcessPendingFrames(void)
+{
+  uint32_t i;
+  uint32_t now_1ms = trk_probe_time_1ms;
+
+  for (i = 0U; i < TRK_PROBE_NUM_CHANNELS; ++i)
+  {
+    TrkProbeChannel *channel = &trk_channels[i];
+    uint8_t len;
+
+    if ((channel->frame_len == 0U) ||
+        ((int32_t)(now_1ms - channel->frame_deadline_tick_1ms) < 0))
+    {
+      continue;
+    }
+
+    len = channel->frame_len;
+    channel->frame_len = 0U;
+    channel->frame_deadline_tick_1ms = 0U;
+    TrkProbe_ProcessChunk(channel, channel->frame_buf, len);
+    TrkProbe_SyncPublicStatus(channel);
+  }
 }
 
 const TrkProbeStatus *TrkProbe_GetStatus(void)

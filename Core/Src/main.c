@@ -34,6 +34,7 @@
 #include "keyboard.h"
 #include "ssd1322.h"
 #include "trk_probe.h"
+#include "eeprom_at24.h"
 
 /* USER CODE END Includes */
 
@@ -577,7 +578,11 @@ void SystemClock_Config(void)
 /* USER CODE BEGIN 4 */
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
-  if (htim->Instance == TIM4)
+  if (htim->Instance == TIM3)
+  {
+    TrkProbe_On1msTick();
+  }
+  else if (htim->Instance == TIM4)
   {
     Keyboard_Task10ms();
   }
@@ -591,6 +596,21 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t size)
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 {
   TrkProbe_OnTxCplt(huart);
+}
+
+void HAL_I2C_MemTxCpltCallback(I2C_HandleTypeDef *hi2c)
+{
+  AT24_OnMemTxCplt(hi2c);
+}
+
+void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c)
+{
+  AT24_OnMemRxCplt(hi2c);
+}
+
+void HAL_I2C_ErrorCallback(I2C_HandleTypeDef *hi2c)
+{
+  AT24_OnError(hi2c);
 }
 
 /* USER CODE END 4 */
