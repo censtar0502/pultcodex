@@ -8,6 +8,28 @@ extern "C" {
 #include <stdint.h>
 
 #include "main.h"
+#include "keyboard.h"
+
+typedef enum
+{
+  TRK_CHANNEL_OFFLINE = 0,
+  TRK_CHANNEL_IDLE,
+  TRK_CHANNEL_CALLING,
+  TRK_CHANNEL_AUTH_WAIT,
+  TRK_CHANNEL_STARTED,
+  TRK_CHANNEL_PAUSED,
+  TRK_CHANNEL_FUELLING,
+  TRK_CHANNEL_FINISHING,
+  TRK_CHANNEL_FINISHED_HOLD,
+  TRK_CHANNEL_ERROR
+} TrkChannelState;
+
+typedef enum
+{
+  TRK_UI_MODE_MAIN = 0,
+  TRK_UI_MODE_MENU,
+  TRK_UI_MODE_EDIT_PRICE
+} TrkUiMode;
 
 typedef struct
 {
@@ -23,6 +45,11 @@ typedef struct
   uint8_t last_nozzle;
   uint16_t last_rx_len;
   uint32_t last_rx_tick;
+  uint8_t enabled;
+  uint32_t price;
+  uint8_t channel_state;
+  uint8_t ui_selected;
+  char price_edit_buf[6];
   char last_ascii[20];
 } TrkProbeChannelStatus;
 
@@ -30,10 +57,15 @@ typedef struct
 {
   TrkProbeChannelStatus trk1;
   TrkProbeChannelStatus trk2;
+  TrkProbeChannelStatus trk3;
+  uint8_t active_ui_trk;
+  uint8_t ui_mode;
+  uint8_t menu_index;
 } TrkProbeStatus;
 
 void TrkProbe_Init(void);
 void TrkProbe_Task(void);
+void TrkProbe_HandleKey(const KeyboardEvent *event);
 void TrkProbe_OnRxEvent(UART_HandleTypeDef *huart, uint16_t size);
 void TrkProbe_OnTxCplt(UART_HandleTypeDef *huart);
 const TrkProbeStatus *TrkProbe_GetStatus(void);

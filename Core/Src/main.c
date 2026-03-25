@@ -61,35 +61,47 @@
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
-static void ShowKeyboardTestScreen(void);
-static void ShowKeyboardEvent(const KeyboardEvent *event);
+static void ShowBootScreen(void);
 static void ShowTrkProbeStatus(void);
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-static void ShowKeyboardTestScreen(void)
+static void ShowBootScreen(void)
 {
   SSD1322_Clear(0x00U);
-  SSD1322_DrawString8x8(8U, 8U, "KEYBOARD TEST", 0x0FU);
-  SSD1322_DrawString8x8(8U, 24U, "PRESS ANY KEY", 0x0FU);
-  SSD1322_DrawString8x8(8U, 40U, "WAITING...", 0x0FU);
+  SSD1322_DrawString8x8(8U, 8U, "PULTCODEX", 0x0FU);
+  SSD1322_DrawString8x8(8U, 24U, "IDLE FSM START", 0x0FU);
+  SSD1322_DrawString8x8(8U, 40U, "WAITING FOR STATUS", 0x0FU);
   SSD1322_Flush();
 }
 
-static void ShowKeyboardEvent(const KeyboardEvent *event)
+static const char *ChannelMainText(const TrkProbeChannelStatus *ch)
 {
-  char key_line[20];
+  if (ch->enabled == 0U)
+  {
+    return "Off";
+  }
 
-  SSD1322_Clear(0x00U);
-  SSD1322_DrawString8x8(8U, 8U, "KEYBOARD TEST", 0x0FU);
-  (void)snprintf(key_line, sizeof(key_line), "KEY: %c", event->key);
-  SSD1322_DrawString8x8(8U, 24U, key_line, 0x0FU);
-  SSD1322_DrawString8x8(8U, 40U, Keyboard_GetLegend(event->key), 0x0FU);
-  SSD1322_DrawString8x8(144U, 24U, "STATE: DOWN", 0x0FU);
+  if (ch->online == 0U)
+  {
+    return "Not Connect!";
+  }
 
-  SSD1322_Flush();
+  return "A: 0";
+}
+
+static void ShowMainChannelPanel(uint8_t x, const char *label,
+                                 const TrkProbeChannelStatus *ch)
+{
+  char line[24];
+
+  (void)snprintf(line, sizeof(line), "%c%s",
+                 (ch->ui_selected != 0U) ? '>' : ' ',
+                 label);
+  SSD1322_DrawString8x8(x, 0U, line, 0x0FU);
+  SSD1322_DrawString8x8(x, 18U, ChannelMainText(ch), 0x0FU);
 }
 
 static void ShowTrkProbeStatus(void)
@@ -97,7 +109,13 @@ static void ShowTrkProbeStatus(void)
   const TrkProbeStatus *status = TrkProbe_GetStatus();
   static TrkProbeStatus last_drawn_status;
   static uint32_t last_draw_ms;
-  char line[40];
+  char line[42];
+  const char *menu_items[4] = {
+    "TRK1 ENABLE",
+    "TRK2 ENABLE",
+    "TRK1 PRICE",
+    "TRK2 PRICE"
+  };
   uint32_t now = HAL_GetTick();
 
   if ((memcmp(&last_drawn_status, status, sizeof(last_drawn_status)) == 0) &&
@@ -110,36 +128,46 @@ static void ShowTrkProbeStatus(void)
   last_draw_ms = now;
 
   SSD1322_Clear(0x00U);
-  SSD1322_DrawString8x8(8U, 0U, "TRK STATUS PROBE", 0x0FU);
 
-  (void)snprintf(line, sizeof(line), "1 S:%c N:%c O:%u",
-                 (status->trk1.last_status != 0U) ? (char)status->trk1.last_status : '-',
-                 (status->trk1.last_nozzle != 0U) ? (char)status->trk1.last_nozzle : '-',
-                 (unsigned int)status->trk1.online);
-  SSD1322_DrawString8x8(8U, 16U, line, 0x0FU);
+  if (status->ui_mode == (uint8_t)TRK_UI_MODE_MAIN)
+  {
+    ShowMainChannelPanel(8U, "TRK1", &status->trk1);
+    ShowMainChannelPanel(136U, "TRK2", &status->trk2);
+  }
+  else if (status->ui_mode == (uint8_t)TRK_UI_MODE_MENU)
+  {
+    SSD1322_DrawString8x8(8U, 0U, "SETUP MENU", 0x0FU);
+    (void)snprintf(line, sizeof(line), "%c %s",
+                   (status->menu_index == 0U) ? '>' : ' ',
+                   menu_items[0]);
+    SSD1322_DrawString8x8(8U, 16U, line, 0x0FU);
+    (void)snprintf(line, sizeof(line), "%c %s",
+                   (status->menu_index == 1U) ? '>' : ' ',
+                   menu_items[1]);
+    SSD1322_DrawString8x8(8U, 28U, line, 0x0FU);
+    (void)snprintf(line, sizeof(line), "%c %s",
+                   (status->menu_index == 2U) ? '>' : ' ',
+                   menu_items[2]);
+    SSD1322_DrawString8x8(8U, 40U, line, 0x0FU);
+    (void)snprintf(line, sizeof(line), "%c %s",
+                   (status->menu_index == 3U) ? '>' : ' ',
+                   menu_items[3]);
+    SSD1322_DrawString8x8(8U, 52U, line, 0x0FU);
+  }
+  else
+  {
+    const TrkProbeChannelStatus *edit_ch =
+      (status->active_ui_trk == 2U) ? &status->trk2 : &status->trk1;
 
-  (void)snprintf(line, sizeof(line), "1 T%lu R%lu C%lu",
-                 (unsigned long)status->trk1.tx_count,
-                 (unsigned long)status->trk1.rx_count,
-                 (unsigned long)status->trk1.crc_error_count);
-  SSD1322_DrawString8x8(8U, 28U, line, 0x0FU);
-
-  (void)snprintf(line, sizeof(line), "2 S:%c N:%c O:%u",
-                 (status->trk2.last_status != 0U) ? (char)status->trk2.last_status : '-',
-                 (status->trk2.last_nozzle != 0U) ? (char)status->trk2.last_nozzle : '-',
-                 (unsigned int)status->trk2.online);
-  SSD1322_DrawString8x8(8U, 40U, line, 0x0FU);
-
-  (void)snprintf(line, sizeof(line), "2 T%lu R%lu C%lu",
-                 (unsigned long)status->trk2.tx_count,
-                 (unsigned long)status->trk2.rx_count,
-                 (unsigned long)status->trk2.crc_error_count);
-  SSD1322_DrawString8x8(8U, 52U, line, 0x0FU);
-
-  (void)snprintf(line, sizeof(line), "TO %lu/%lu",
-                 (unsigned long)status->trk1.timeout_count,
-                 (unsigned long)status->trk2.timeout_count);
-  SSD1322_DrawString8x8(152U, 0U, line, 0x0FU);
+    SSD1322_DrawString8x8(8U, 0U, "EDIT PRICE", 0x0FU);
+    (void)snprintf(line, sizeof(line), "TRK%u PRICE",
+                   (unsigned int)status->active_ui_trk);
+    SSD1322_DrawString8x8(8U, 18U, line, 0x0FU);
+    (void)snprintf(line, sizeof(line), "P:%s",
+                   (edit_ch->price_edit_buf[0] != '\0') ? edit_ch->price_edit_buf : "_");
+    SSD1322_DrawString8x8(8U, 34U, line, 0x0FU);
+    SSD1322_DrawString8x8(8U, 52U, "K SAVE  E CLR", 0x0FU);
+  }
 
   SSD1322_Flush();
 }
@@ -199,7 +227,7 @@ int main(void)
   Keyboard_Init();
   AppLog_Init();
   TrkProbe_Init();
-  ShowKeyboardTestScreen();
+  ShowBootScreen();
   AppLog_Message(APP_LOG_LEVEL_INFO, "BOOT", "PULTCODEX USB CDC READY");
 
   /* USER CODE END 2 */
@@ -216,10 +244,9 @@ int main(void)
     if (Keyboard_GetEvent(&event) != 0U)
     {
       AppLog_KeyEvent(&event);
-
       if (event.pressed != 0U)
       {
-        ShowKeyboardEvent(&event);
+        TrkProbe_HandleKey(&event);
       }
     }
 

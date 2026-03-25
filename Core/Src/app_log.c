@@ -7,7 +7,7 @@
 
 #define APP_LOG_ENABLE_GENERAL     1U
 #define APP_LOG_ENABLE_KEYBOARD    1U
-#define APP_LOG_PROTO_MASK         APP_LOG_PROTO_BOTH
+#define APP_LOG_PROTO_MASK         APP_LOG_PROTO_NONE
 #define APP_LOG_PROTO_MAX_BYTES    64U
 
 static const char *AppLog_LevelText(AppLogLevel level)
@@ -34,6 +34,11 @@ static uint8_t AppLog_IsProtoEnabled(uint8_t trk_id)
   if (trk_id == 2U)
   {
     return ((APP_LOG_PROTO_MASK & APP_LOG_PROTO_TRK2) != 0U) ? 1U : 0U;
+  }
+
+  if (trk_id == 3U)
+  {
+    return ((APP_LOG_PROTO_MASK & APP_LOG_PROTO_TRK3) != 0U) ? 1U : 0U;
   }
 
   return 0U;
