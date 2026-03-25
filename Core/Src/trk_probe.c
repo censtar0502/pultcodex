@@ -20,6 +20,8 @@
 #define TRK_PROBE_NUM_CHANNELS     2U
 #define TRK_PROBE_MENU_ITEMS       4U
 #define TRK_PROBE_OFFLINE_AFTER_MISSES 5U
+#define TRK_PROBE_PRESET_MONEY_MAX 999999UL
+#define TRK_PROBE_PRESET_VOLUME_CL_MAX 90000UL
 #define TRK_PROBE_NV_MAGIC         0x54524B50UL
 #define TRK_PROBE_NV_VERSION       2U
 #define TRK_PROBE_NV_ADDR          0x0000U
@@ -82,6 +84,12 @@ static void TrkProbe_SelectTrk(uint8_t trk_id);
 static void TrkProbe_ExitToMain(void);
 static void TrkProbe_SetNotice(const char *text, uint32_t duration_ms);
 static void TrkProbe_CycleDispenseMode(TrkProbeChannel *channel);
+static void TrkProbe_ClearPreset(TrkProbeChannel *channel);
+static void TrkProbe_UpdateFullTankPreset(TrkProbeChannel *channel);
+static uint8_t TrkProbe_ParseMoneyPresetText(const char *src, uint32_t *money_out);
+static uint8_t TrkProbe_ParseVolumePresetText(const char *src, uint32_t *volume_cl_out);
+static uint8_t TrkProbe_UpdatePresetFromBuffer(TrkProbeChannel *channel);
+static void TrkProbe_RecalculatePreset(TrkProbeChannel *channel);
 static uint32_t TrkProbe_Crc32(const void *data, uint32_t len);
 static void TrkProbe_RegisterCommSuccess(TrkProbeChannel *channel);
 static void TrkProbe_RegisterCommFailure(TrkProbeChannel *channel);
@@ -163,6 +171,18 @@ static void TrkProbe_SetPriceValue(TrkProbeChannel *channel, uint32_t price_raw,
                  sizeof(channel->status.price_text),
                  "%s",
                  safe_price_text);
+}
+
+static void TrkProbe_ClearPreset(TrkProbeChannel *channel)
+{
+  if (channel == NULL)
+  {
+    return;
+  }
+
+  channel->status.preset_money = 0U;
+  channel->status.preset_volume_cl = 0U;
+  channel->status.preset_edit_buf[0] = '\0';
 }
 
 static uint32_t TrkProbe_Crc32(const void *data, uint32_t len)
@@ -275,6 +295,236 @@ static uint8_t TrkProbe_ParsePriceEditValue(const TrkProbeChannel *channel, uint
   return TrkProbe_ParsePriceText(channel->status.price_edit_buf, price_raw_out);
 }
 
+static uint8_t TrkProbe_ParseMoneyPresetText(const char *src, uint32_t *money_out)
+{
+  uint32_t money = 0U;
+
+  if ((src == NULL) || (money_out == NULL))
+  {
+    return 0U;
+  }
+
+  if (*src == '\0')
+  {
+    *money_out = 0U;
+    return 1U;
+  }
+
+  while (*src != '\0')
+  {
+    if ((*src < '0') || (*src > '9'))
+    {
+      return 0U;
+    }
+
+    money = (money * 10UL) + (uint32_t)(*src - '0');
+    if (money > TRK_PROBE_PRESET_MONEY_MAX)
+    {
+      return 0U;
+    }
+
+    ++src;
+  }
+
+  *money_out = money;
+  return 1U;
+}
+
+static uint8_t TrkProbe_ParseVolumePresetText(const char *src, uint32_t *volume_cl_out)
+{
+  uint32_t liters = 0U;
+  uint32_t frac = 0U;
+  uint8_t seen_dot = 0U;
+  uint8_t frac_digits = 0U;
+
+  if ((src == NULL) || (volume_cl_out == NULL))
+  {
+    return 0U;
+  }
+
+  if (*src == '\0')
+  {
+    *volume_cl_out = 0U;
+    return 1U;
+  }
+
+  while (*src != '\0')
+  {
+    if ((*src >= '0') && (*src <= '9'))
+    {
+      if (seen_dot == 0U)
+      {
+        liters = (liters * 10UL) + (uint32_t)(*src - '0');
+        if (liters > 900UL)
+        {
+          return 0U;
+        }
+      }
+      else
+      {
+        if (frac_digits >= 2U)
+        {
+          return 0U;
+        }
+
+        frac = (frac * 10UL) + (uint32_t)(*src - '0');
+        ++frac_digits;
+      }
+    }
+    else if (*src == '.')
+    {
+      if (seen_dot != 0U)
+      {
+        return 0U;
+      }
+
+      seen_dot = 1U;
+    }
+    else
+    {
+      return 0U;
+    }
+
+    ++src;
+  }
+
+  if ((seen_dot != 0U) && (frac_digits == 0U))
+  {
+    return 0U;
+  }
+
+  if (frac_digits == 1U)
+  {
+    frac *= 10UL;
+  }
+
+  *volume_cl_out = (liters * 100UL) + frac;
+  if (*volume_cl_out > TRK_PROBE_PRESET_VOLUME_CL_MAX)
+  {
+    return 0U;
+  }
+
+  return 1U;
+}
+
+static void TrkProbe_UpdateFullTankPreset(TrkProbeChannel *channel)
+{
+  uint32_t volume_cl;
+
+  if (channel == NULL)
+  {
+    return;
+  }
+
+  channel->status.preset_edit_buf[0] = '\0';
+  channel->status.preset_money = TRK_PROBE_PRESET_MONEY_MAX;
+
+  if (channel->status.price == 0U)
+  {
+    channel->status.preset_volume_cl = 0U;
+    return;
+  }
+
+  volume_cl = (TRK_PROBE_PRESET_MONEY_MAX * 100UL) / channel->status.price;
+  if (volume_cl > TRK_PROBE_PRESET_VOLUME_CL_MAX)
+  {
+    volume_cl = TRK_PROBE_PRESET_VOLUME_CL_MAX;
+  }
+
+  channel->status.preset_volume_cl = volume_cl;
+}
+
+static uint8_t TrkProbe_UpdatePresetFromBuffer(TrkProbeChannel *channel)
+{
+  uint32_t parsed_value;
+
+  if (channel == NULL)
+  {
+    return 0U;
+  }
+
+  if ((TrkDispenseMode)channel->status.dispense_mode == TRK_DISPENSE_MODE_MONEY)
+  {
+    if (TrkProbe_ParseMoneyPresetText(channel->status.preset_edit_buf, &parsed_value) == 0U)
+    {
+      return 0U;
+    }
+
+    channel->status.preset_money = parsed_value;
+    if (channel->status.price == 0U)
+    {
+      channel->status.preset_volume_cl = 0U;
+    }
+    else
+    {
+      channel->status.preset_volume_cl = (parsed_value * 100UL) / channel->status.price;
+      if (channel->status.preset_volume_cl > TRK_PROBE_PRESET_VOLUME_CL_MAX)
+      {
+        channel->status.preset_volume_cl = TRK_PROBE_PRESET_VOLUME_CL_MAX;
+      }
+    }
+    return 1U;
+  }
+
+  if ((TrkDispenseMode)channel->status.dispense_mode == TRK_DISPENSE_MODE_VOLUME)
+  {
+    if (TrkProbe_ParseVolumePresetText(channel->status.preset_edit_buf, &parsed_value) == 0U)
+    {
+      return 0U;
+    }
+
+    channel->status.preset_volume_cl = parsed_value;
+    channel->status.preset_money = (parsed_value * channel->status.price) / 100UL;
+    if (channel->status.preset_money > TRK_PROBE_PRESET_MONEY_MAX)
+    {
+      channel->status.preset_money = TRK_PROBE_PRESET_MONEY_MAX;
+    }
+    return 1U;
+  }
+
+  TrkProbe_UpdateFullTankPreset(channel);
+  return 1U;
+}
+
+static void TrkProbe_RecalculatePreset(TrkProbeChannel *channel)
+{
+  if (channel == NULL)
+  {
+    return;
+  }
+
+  switch ((TrkDispenseMode)channel->status.dispense_mode)
+  {
+    case TRK_DISPENSE_MODE_MONEY:
+      if (channel->status.price == 0U)
+      {
+        channel->status.preset_volume_cl = 0U;
+      }
+      else
+      {
+        channel->status.preset_volume_cl = (channel->status.preset_money * 100UL) / channel->status.price;
+        if (channel->status.preset_volume_cl > TRK_PROBE_PRESET_VOLUME_CL_MAX)
+        {
+          channel->status.preset_volume_cl = TRK_PROBE_PRESET_VOLUME_CL_MAX;
+        }
+      }
+      break;
+
+    case TRK_DISPENSE_MODE_VOLUME:
+      channel->status.preset_money = (channel->status.preset_volume_cl * channel->status.price) / 100UL;
+      if (channel->status.preset_money > TRK_PROBE_PRESET_MONEY_MAX)
+      {
+        channel->status.preset_money = TRK_PROBE_PRESET_MONEY_MAX;
+      }
+      break;
+
+    case TRK_DISPENSE_MODE_FULL:
+    default:
+      TrkProbe_UpdateFullTankPreset(channel);
+      break;
+  }
+}
+
 static void TrkProbe_LoadDefaults(void)
 {
   memset(&trk_channels, 0, sizeof(trk_channels));
@@ -288,6 +538,7 @@ static void TrkProbe_LoadDefaults(void)
   trk_channels[0].status.channel_state = (uint8_t)TRK_CHANNEL_OFFLINE;
   trk_channels[0].status.dispense_mode = (uint8_t)TRK_DISPENSE_MODE_MONEY;
   TrkProbe_SetPriceValue(&trk_channels[0], 1100U, "1100");
+  TrkProbe_ClearPreset(&trk_channels[0]);
   strcpy(trk_channels[0].status.last_ascii, "-");
 
   trk_channels[1].huart = &huart1;
@@ -298,6 +549,7 @@ static void TrkProbe_LoadDefaults(void)
   trk_channels[1].status.channel_state = (uint8_t)TRK_CHANNEL_OFFLINE;
   trk_channels[1].status.dispense_mode = (uint8_t)TRK_DISPENSE_MODE_MONEY;
   TrkProbe_SetPriceValue(&trk_channels[1], 1100U, "1100");
+  TrkProbe_ClearPreset(&trk_channels[1]);
   strcpy(trk_channels[1].status.last_ascii, "-");
 
   trk_probe_status.active_ui_trk = 1U;
@@ -333,6 +585,10 @@ static void TrkProbe_ApplyNvConfig(const TrkProbeNvConfig *config)
     if (config->channels[i].dispense_mode <= (uint8_t)TRK_DISPENSE_MODE_FULL)
     {
       trk_channels[i].status.dispense_mode = config->channels[i].dispense_mode;
+      if ((TrkDispenseMode)trk_channels[i].status.dispense_mode == TRK_DISPENSE_MODE_FULL)
+      {
+        TrkProbe_UpdateFullTankPreset(&trk_channels[i]);
+      }
     }
   }
 }
@@ -556,6 +812,12 @@ static void TrkProbe_CycleDispenseMode(TrkProbeChannel *channel)
     default:
       channel->status.dispense_mode = (uint8_t)TRK_DISPENSE_MODE_MONEY;
       break;
+  }
+
+  TrkProbe_ClearPreset(channel);
+  if ((TrkDispenseMode)channel->status.dispense_mode == TRK_DISPENSE_MODE_FULL)
+  {
+    TrkProbe_UpdateFullTankPreset(channel);
   }
 }
 
@@ -1026,6 +1288,83 @@ void TrkProbe_HandleKey(const KeyboardEvent *event)
       return;
     }
 
+    if (event->key == 'E')
+    {
+      channel = TrkProbe_GetActiveUiChannel();
+      if ((channel != NULL) && (TrkProbe_IsEnabled(channel) != 0U))
+      {
+        len = strlen(channel->status.preset_edit_buf);
+        if (len > 0U)
+        {
+          channel->status.preset_edit_buf[len - 1U] = '\0';
+          if (TrkProbe_UpdatePresetFromBuffer(channel) == 0U)
+          {
+            TrkProbe_ClearPreset(channel);
+          }
+        }
+        else
+        {
+          TrkProbe_ClearPreset(channel);
+          if ((TrkDispenseMode)channel->status.dispense_mode == TRK_DISPENSE_MODE_FULL)
+          {
+            TrkProbe_UpdateFullTankPreset(channel);
+          }
+        }
+        TrkProbe_SyncPublicStatus(channel);
+      }
+      return;
+    }
+
+    if ((event->key >= '0') && (event->key <= '9'))
+    {
+      channel = TrkProbe_GetActiveUiChannel();
+      if ((channel != NULL) &&
+          (TrkProbe_IsEnabled(channel) != 0U) &&
+          ((TrkDispenseMode)channel->status.dispense_mode != TRK_DISPENSE_MODE_FULL))
+      {
+        char backup[sizeof(channel->status.preset_edit_buf)];
+
+        (void)snprintf(backup, sizeof(backup), "%s", channel->status.preset_edit_buf);
+        len = strlen(channel->status.preset_edit_buf);
+        if (len < (sizeof(channel->status.preset_edit_buf) - 1U))
+        {
+          channel->status.preset_edit_buf[len] = event->key;
+          channel->status.preset_edit_buf[len + 1U] = '\0';
+          if (TrkProbe_UpdatePresetFromBuffer(channel) == 0U)
+          {
+            (void)snprintf(channel->status.preset_edit_buf,
+                           sizeof(channel->status.preset_edit_buf),
+                           "%s",
+                           backup);
+            (void)TrkProbe_UpdatePresetFromBuffer(channel);
+            TrkProbe_SetNotice("Bad preset", 1200U);
+          }
+          TrkProbe_SyncPublicStatus(channel);
+        }
+      }
+      return;
+    }
+
+    if (event->key == '.')
+    {
+      channel = TrkProbe_GetActiveUiChannel();
+      if ((channel != NULL) &&
+          (TrkProbe_IsEnabled(channel) != 0U) &&
+          ((TrkDispenseMode)channel->status.dispense_mode == TRK_DISPENSE_MODE_VOLUME))
+      {
+        len = strlen(channel->status.preset_edit_buf);
+        if ((len > 0U) &&
+            (len < (sizeof(channel->status.preset_edit_buf) - 1U)) &&
+            (strchr(channel->status.preset_edit_buf, '.') == NULL))
+        {
+          channel->status.preset_edit_buf[len] = '.';
+          channel->status.preset_edit_buf[len + 1U] = '\0';
+          TrkProbe_SyncPublicStatus(channel);
+        }
+      }
+      return;
+    }
+
     if ((event->key == 'G') && (TrkProbe_CanSelectTrk(1U) != 0U))
     {
       TrkProbe_SelectTrk(1U);
@@ -1179,6 +1518,7 @@ void TrkProbe_HandleKey(const KeyboardEvent *event)
       channel->status.price_edit_buf[0] = '\0';
     }
 
+    TrkProbe_RecalculatePreset(channel);
     TrkProbe_LogPrice(channel->trk_id, channel->status.price);
     if (TrkProbe_SaveNvConfig() != 0U)
     {

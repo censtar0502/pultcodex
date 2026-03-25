@@ -55,9 +55,12 @@ typedef struct
   uint8_t enabled;
   uint32_t price;
   char price_text[6];
+  uint32_t preset_money;
+  uint32_t preset_volume_cl;
   uint8_t channel_state;
   uint8_t dispense_mode;
   uint8_t ui_selected;
+  char preset_edit_buf[10];
   char price_edit_buf[6];
   char last_ascii[20];
 } TrkProbeChannelStatus;

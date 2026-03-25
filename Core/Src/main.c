@@ -101,27 +101,102 @@ static const char *ChannelMainText(const TrkProbeChannelStatus *ch)
   }
 }
 
+static void FormatVolumeCl(uint32_t volume_cl, char *buf, size_t buf_size)
+{
+  uint32_t liters = volume_cl / 100UL;
+  uint32_t frac = volume_cl % 100UL;
+
+  if ((buf == NULL) || (buf_size == 0U))
+  {
+    return;
+  }
+
+  if (frac == 0U)
+  {
+    (void)snprintf(buf, buf_size, "%lu", (unsigned long)liters);
+  }
+  else if ((frac % 10U) == 0U)
+  {
+    (void)snprintf(buf, buf_size, "%lu.%lu",
+                   (unsigned long)liters,
+                   (unsigned long)(frac / 10U));
+  }
+  else
+  {
+    (void)snprintf(buf, buf_size, "%lu.%02lu",
+                   (unsigned long)liters,
+                   (unsigned long)frac);
+  }
+}
+
 static void ShowMainChannelPanel(uint8_t x, const char *label,
                                  const TrkProbeChannelStatus *ch)
 {
   char line[24];
-  const char *main_text = ChannelMainText(ch);
+  char main_text[24];
+  char sub_text[24];
+  const char *fallback_text = ChannelMainText(ch);
 
   (void)snprintf(line, sizeof(line), "%c%s",
                  (ch->ui_selected != 0U) ? '>' : ' ',
                  label);
   SSD1322_DrawString8x8(x, 0U, line, 0x0FU);
 
-  if ((strcmp(main_text, "A:0") == 0) ||
-      (strcmp(main_text, "L:0") == 0) ||
-      (strcmp(main_text, "H") == 0) ||
-      (strcmp(main_text, "Off") == 0))
+  main_text[0] = '\0';
+  sub_text[0] = '\0';
+
+  if ((ch->enabled != 0U) && (ch->online != 0U))
+  {
+    switch ((TrkDispenseMode)ch->dispense_mode)
+    {
+      case TRK_DISPENSE_MODE_MONEY:
+        (void)snprintf(main_text, sizeof(main_text), "A:%lu",
+                       (unsigned long)ch->preset_money);
+        {
+          char volume_text[16];
+          FormatVolumeCl(ch->preset_volume_cl, volume_text, sizeof(volume_text));
+          (void)snprintf(sub_text, sizeof(sub_text), "L:%s", volume_text);
+        }
+        break;
+
+      case TRK_DISPENSE_MODE_VOLUME:
+        {
+          char volume_text[16];
+          FormatVolumeCl(ch->preset_volume_cl, volume_text, sizeof(volume_text));
+          (void)snprintf(main_text, sizeof(main_text), "L:%s", volume_text);
+        }
+        (void)snprintf(sub_text, sizeof(sub_text), "A:%lu",
+                       (unsigned long)ch->preset_money);
+        break;
+
+      case TRK_DISPENSE_MODE_FULL:
+      default:
+        (void)snprintf(main_text, sizeof(main_text), "H");
+        {
+          char volume_text[16];
+          FormatVolumeCl(ch->preset_volume_cl, volume_text, sizeof(volume_text));
+          (void)snprintf(sub_text, sizeof(sub_text), "L:%s", volume_text);
+        }
+        break;
+    }
+  }
+  else
+  {
+    (void)snprintf(main_text, sizeof(main_text), "%s", fallback_text);
+  }
+
+  if (strlen(main_text) <= 5U)
   {
     SSD1322_DrawString16x16(x, 20U, main_text, 0x0FU);
   }
   else
   {
     SSD1322_DrawString8x8(x, 24U, main_text, 0x0FU);
+  }
+
+  if (sub_text[0] != '\0')
+  {
+    SSD1322_DrawString8x8(x, 46U, sub_text, 0x0FU);
   }
 }
 
