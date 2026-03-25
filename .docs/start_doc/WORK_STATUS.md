@@ -24,6 +24,10 @@
   - runtime-model
   - config/NV helpers
   - общие данные каналов
+- `Core/Src/trk_probe_fsm.c`
+  - переходы состояния канала
+  - online/offline логика
+  - poll-rate выбор по состоянию
 - `Core/Src/trk_probe_transport.c`
   - transport task
   - polling orchestration
@@ -40,6 +44,7 @@
 Под это введены новые headers:
 
 - `Core/Inc/trk_probe_internal.h`
+- `Core/Inc/trk_probe_fsm.h`
 - `Core/Inc/protocol_types.h`
 - `Core/Inc/dispenser_protocol.h`
 - `Core/Inc/proto_gaskitlink.h`
@@ -50,18 +55,22 @@
 ### Transport / polling
 
 - transport теперь живёт в отдельном модуле `Core/Src/trk_probe_transport.c`
+- FSM теперь живёт в отдельном модуле `Core/Src/trk_probe_fsm.c`
 - protocol-specific парсинг и сборка кадров вынесены в `Core/Src/proto_gaskitlink.c`
 - runtime/model остаётся в `Core/Src/trk_probe.c`
 - UI больше не вмешивается в protocol parsing
+- transport больше не меняет channel state напрямую, а передаёт результат парсинга
+  в FSM
 
 Антидребезг связи:
 - единичный timeout или битый кадр больше не переводит канал сразу в `Not Connect!`
 - канал считается offline только после `5` подряд ошибок связи
 - первый же валидный ответ сразу возвращает канал в `online`
 
-По архитектуре это уже заметно ближе к целевой схеме из документации:
+По архитектуре это уже соответствует целевому направлению заметно ближе:
 - transport
 - protocol adapter
+- channel FSM
 - runtime/model
 - UI/controller
 
@@ -215,7 +224,6 @@
 
 ## Что ещё НЕ сделано
 
-- отдельный `channel_fsm.c`
 - полноценное меню
 - расширенное меню настроек
 - пауза / продолжение `B/G` во время уже идущей транзакции

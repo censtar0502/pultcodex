@@ -1,4 +1,5 @@
 #include "trk_probe_internal.h"
+#include "trk_probe_fsm.h"
 
 #include <string.h>
 
