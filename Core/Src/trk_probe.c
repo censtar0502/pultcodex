@@ -93,6 +93,7 @@ static uint8_t TrkProbe_SendFrame(TrkProbeChannel *channel, const uint8_t *paylo
 static uint8_t TrkProbe_StartTransaction(TrkProbeChannel *channel);
 static uint8_t TrkProbe_SendSimpleCommand(TrkProbeChannel *channel, char command);
 static void TrkProbe_ClearPreset(TrkProbeChannel *channel);
+static void TrkProbe_ClearHeldTransactionDisplay(TrkProbeChannel *channel);
 static void TrkProbe_UpdateFullTankPreset(TrkProbeChannel *channel);
 static uint8_t TrkProbe_ParseMoneyPresetText(const char *src, uint32_t *money_out);
 static uint8_t TrkProbe_ParseVolumePresetText(const char *src, uint32_t *volume_cl_out);
@@ -196,6 +197,22 @@ static void TrkProbe_ClearPreset(TrkProbeChannel *channel)
   channel->status.preset_money = 0U;
   channel->status.preset_volume_cl = 0U;
   channel->status.preset_edit_buf[0] = '\0';
+}
+
+static void TrkProbe_ClearHeldTransactionDisplay(TrkProbeChannel *channel)
+{
+  if (channel == NULL)
+  {
+    return;
+  }
+
+  if ((channel->status.final_data_ready != 0U) ||
+      (channel->status.channel_state == (uint8_t)TRK_CHANNEL_FINISHING) ||
+      (channel->status.channel_state == (uint8_t)TRK_CHANNEL_FINISHED_HOLD))
+  {
+    TrkProbe_ResetTransactionRuntime(channel);
+    TrkProbe_ClearPreset(channel);
+  }
 }
 
 static void TrkProbe_ResetTransactionRuntime(TrkProbeChannel *channel)
@@ -1248,6 +1265,7 @@ static uint8_t TrkProbe_StartTransaction(TrkProbeChannel *channel)
   channel->status.final_money = 0U;
   channel->status.final_volume_cl = 0U;
   channel->status.transaction_id = '\0';
+  channel->status.preset_edit_buf[0] = '\0';
   return 1U;
 }
 
@@ -1638,6 +1656,7 @@ void TrkProbe_HandleKey(const KeyboardEvent *event)
       channel = TrkProbe_GetActiveUiChannel();
       if ((channel != NULL) && (TrkProbe_IsEnabled(channel) != 0U))
       {
+        TrkProbe_ClearHeldTransactionDisplay(channel);
         TrkProbe_CycleDispenseMode(channel);
         if (TrkProbe_SaveNvConfig() == 0U)
         {
@@ -1702,6 +1721,7 @@ void TrkProbe_HandleKey(const KeyboardEvent *event)
       {
         char backup[sizeof(channel->status.preset_edit_buf)];
 
+        TrkProbe_ClearHeldTransactionDisplay(channel);
         (void)snprintf(backup, sizeof(backup), "%s", channel->status.preset_edit_buf);
         len = strlen(channel->status.preset_edit_buf);
         if (len < (sizeof(channel->status.preset_edit_buf) - 1U))
@@ -1730,6 +1750,7 @@ void TrkProbe_HandleKey(const KeyboardEvent *event)
           (TrkProbe_IsEnabled(channel) != 0U) &&
           ((TrkDispenseMode)channel->status.dispense_mode == TRK_DISPENSE_MODE_VOLUME))
       {
+        TrkProbe_ClearHeldTransactionDisplay(channel);
         len = strlen(channel->status.preset_edit_buf);
         if ((len > 0U) &&
             (len < (sizeof(channel->status.preset_edit_buf) - 1U)) &&

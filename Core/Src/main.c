@@ -202,9 +202,7 @@ static void ShowMainChannelPanel(uint8_t x, const char *label,
     }
     else if (((TrkChannelState)ch->channel_state == TRK_CHANNEL_STARTED) ||
              ((TrkChannelState)ch->channel_state == TRK_CHANNEL_PAUSED) ||
-             ((TrkChannelState)ch->channel_state == TRK_CHANNEL_FUELLING) ||
-             ((TrkChannelState)ch->channel_state == TRK_CHANNEL_FINISHING) ||
-             ((TrkChannelState)ch->channel_state == TRK_CHANNEL_FINISHED_HOLD))
+             ((TrkChannelState)ch->channel_state == TRK_CHANNEL_FUELLING))
     {
       shown_money = ch->live_money;
       shown_volume_cl = ch->live_volume_cl;
@@ -234,11 +232,23 @@ static void ShowMainChannelPanel(uint8_t x, const char *label,
 
       case TRK_DISPENSE_MODE_FULL:
       default:
-        (void)snprintf(main_text, sizeof(main_text), "H");
         {
           char volume_text[16];
           FormatVolumeCl(shown_volume_cl, volume_text, sizeof(volume_text));
-          (void)snprintf(sub_text, sizeof(sub_text), "L:%s", volume_text);
+          if (((TrkChannelState)ch->channel_state == TRK_CHANNEL_STARTED) ||
+              ((TrkChannelState)ch->channel_state == TRK_CHANNEL_PAUSED) ||
+              ((TrkChannelState)ch->channel_state == TRK_CHANNEL_FUELLING) ||
+              (ch->final_data_ready != 0U))
+          {
+            (void)snprintf(main_text, sizeof(main_text), "L:%s", volume_text);
+            (void)snprintf(sub_text, sizeof(sub_text), "A:%lu",
+                           (unsigned long)shown_money);
+          }
+          else
+          {
+            (void)snprintf(main_text, sizeof(main_text), "H");
+            (void)snprintf(sub_text, sizeof(sub_text), "L:%s", volume_text);
+          }
         }
         break;
     }
@@ -248,7 +258,7 @@ static void ShowMainChannelPanel(uint8_t x, const char *label,
     (void)snprintf(main_text, sizeof(main_text), "%s", fallback_text);
   }
 
-  if (strlen(main_text) <= 5U)
+  if ((ch->enabled != 0U) && (ch->online != 0U))
   {
     SSD1322_DrawString16x16(x, 20U, main_text, 0x0FU);
   }
