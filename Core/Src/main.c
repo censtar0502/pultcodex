@@ -150,8 +150,7 @@ static void FormatChannelHeader(const char *label,
       suffix = " UP";
     }
     else if (((TrkChannelState)ch->channel_state == TRK_CHANNEL_FINISHING) ||
-             ((TrkChannelState)ch->channel_state == TRK_CHANNEL_FINISHED_HOLD) ||
-             (ch->final_data_ready != 0U))
+             ((TrkChannelState)ch->channel_state == TRK_CHANNEL_FINISHED_HOLD))
     {
       suffix = " END";
     }
