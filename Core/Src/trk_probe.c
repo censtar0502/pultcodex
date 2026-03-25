@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "app_log.h"
+#include "eeprom_at24.h"
 #include "usart.h"
 
 #define TRK_PROBE_RX_BUF_SIZE      64U
@@ -20,6 +21,10 @@
 
 #define TRK_PROBE_NUM_CHANNELS     2U
 #define TRK_PROBE_MENU_ITEMS       4U
+#define TRK_PROBE_NV_MAGIC         0x54524B50UL
+#define TRK_PROBE_NV_VERSION       1U
+#define TRK_PROBE_NV_ADDR          0x0000U
+#define TRK_PROBE_NV_TIMEOUT_MS    20U
 
 /* TRK1=USART3(PD8/PD9), TRK2=USART1(PB6/PB7). */
 #define TRK_PROBE_ACTIVE_MASK      (TRK_PROBE_MASK_TRK1 | TRK_PROBE_MASK_TRK2)
@@ -38,6 +43,24 @@ typedef struct
   uint32_t last_tx_tick;
   TrkProbeChannelStatus status;
 } TrkProbeChannel;
+
+typedef struct
+{
+  uint8_t enabled;
+  uint8_t dispense_mode;
+  uint8_t reserved0;
+  uint8_t reserved1;
+  uint32_t price;
+} TrkProbeNvChannel;
+
+typedef struct
+{
+  uint32_t magic;
+  uint16_t version;
+  uint16_t size;
+  TrkProbeNvChannel channels[TRK_PROBE_NUM_CHANNELS];
+  uint32_t crc32;
+} TrkProbeNvConfig;
 
 static TrkProbeChannel trk_channels[TRK_PROBE_NUM_CHANNELS];
 static TrkProbeStatus trk_probe_status;
@@ -59,6 +82,11 @@ static void TrkProbe_ExitToMain(void);
 static void TrkProbe_SetNotice(const char *text, uint32_t duration_ms);
 static void TrkProbe_CycleDispenseMode(TrkProbeChannel *channel);
 static void TrkProbe_FormatPrice(uint32_t price_tenths, char *buf, size_t buf_size);
+static uint32_t TrkProbe_Crc32(const void *data, uint32_t len);
+static void TrkProbe_LoadDefaults(void);
+static void TrkProbe_ApplyNvConfig(const TrkProbeNvConfig *config);
+static uint8_t TrkProbe_LoadNvConfig(void);
+static uint8_t TrkProbe_SaveNvConfig(void);
 
 static uint8_t TrkProbe_IsActive(uint8_t trk_id)
 {
@@ -124,6 +152,37 @@ static void TrkProbe_SetPriceEditValue(TrkProbeChannel *channel, uint32_t price)
   TrkProbe_FormatPrice(price,
                        channel->status.price_edit_buf,
                        sizeof(channel->status.price_edit_buf));
+}
+
+static uint32_t TrkProbe_Crc32(const void *data, uint32_t len)
+{
+  const uint8_t *src = (const uint8_t *)data;
+  uint32_t crc = 0xFFFFFFFFUL;
+  uint32_t i;
+  uint8_t bit;
+
+  if (data == NULL)
+  {
+    return 0U;
+  }
+
+  for (i = 0U; i < len; ++i)
+  {
+    crc ^= src[i];
+    for (bit = 0U; bit < 8U; ++bit)
+    {
+      if ((crc & 1UL) != 0U)
+      {
+        crc = (crc >> 1U) ^ 0xEDB88320UL;
+      }
+      else
+      {
+        crc >>= 1U;
+      }
+    }
+  }
+
+  return ~crc;
 }
 
 static void TrkProbe_FormatPrice(uint32_t price_tenths, char *buf, size_t buf_size)
@@ -214,6 +273,132 @@ static uint8_t TrkProbe_ParsePriceEditValue(const TrkProbeChannel *channel, uint
   *price_out = (integer_part * 10UL) + fractional_part;
 
   if ((*price_out < 1UL) || (*price_out > 99990UL))
+  {
+    return 0U;
+  }
+
+  return 1U;
+}
+
+static void TrkProbe_LoadDefaults(void)
+{
+  memset(&trk_channels, 0, sizeof(trk_channels));
+  memset(&trk_probe_status, 0, sizeof(trk_probe_status));
+
+  trk_channels[0].huart = &huart3;
+  trk_channels[0].trk_id = 1U;
+  trk_channels[0].addr_hi = 0x00U;
+  trk_channels[0].addr_lo = 0x01U;
+  trk_channels[0].status.enabled = 1U;
+  trk_channels[0].status.channel_state = (uint8_t)TRK_CHANNEL_OFFLINE;
+  trk_channels[0].status.dispense_mode = (uint8_t)TRK_DISPENSE_MODE_MONEY;
+  TrkProbe_SetPriceEditValue(&trk_channels[0], 1100U);
+  strcpy(trk_channels[0].status.last_ascii, "-");
+
+  trk_channels[1].huart = &huart1;
+  trk_channels[1].trk_id = 2U;
+  trk_channels[1].addr_hi = 0x00U;
+  trk_channels[1].addr_lo = 0x01U;
+  trk_channels[1].status.enabled = 1U;
+  trk_channels[1].status.channel_state = (uint8_t)TRK_CHANNEL_OFFLINE;
+  trk_channels[1].status.dispense_mode = (uint8_t)TRK_DISPENSE_MODE_MONEY;
+  TrkProbe_SetPriceEditValue(&trk_channels[1], 1100U);
+  strcpy(trk_channels[1].status.last_ascii, "-");
+
+  trk_probe_status.active_ui_trk = 1U;
+  trk_probe_status.ui_mode = (uint8_t)TRK_UI_MODE_MAIN;
+  trk_probe_status.menu_index = 0U;
+  trk_probe_status.pending_return_to_menu = 0U;
+}
+
+static void TrkProbe_ApplyNvConfig(const TrkProbeNvConfig *config)
+{
+  uint32_t i;
+
+  if (config == NULL)
+  {
+    return;
+  }
+
+  for (i = 0U; i < TRK_PROBE_NUM_CHANNELS; ++i)
+  {
+    trk_channels[i].status.enabled = (config->channels[i].enabled != 0U) ? 1U : 0U;
+
+    if (config->channels[i].price >= 1UL && config->channels[i].price <= 99990UL)
+    {
+      TrkProbe_SetPriceEditValue(&trk_channels[i], config->channels[i].price);
+    }
+
+    if (config->channels[i].dispense_mode <= (uint8_t)TRK_DISPENSE_MODE_FULL)
+    {
+      trk_channels[i].status.dispense_mode = config->channels[i].dispense_mode;
+    }
+  }
+}
+
+static uint8_t TrkProbe_LoadNvConfig(void)
+{
+  TrkProbeNvConfig config;
+  uint32_t crc_expected;
+
+  if (AT24_DetectAddress() != HAL_OK)
+  {
+    return 0U;
+  }
+
+  if (AT24_Read(TRK_PROBE_NV_ADDR,
+                (uint8_t *)&config,
+                (uint16_t)sizeof(config),
+                TRK_PROBE_NV_TIMEOUT_MS) != HAL_OK)
+  {
+    return 0U;
+  }
+
+  if ((config.magic != TRK_PROBE_NV_MAGIC) ||
+      (config.version != TRK_PROBE_NV_VERSION) ||
+      (config.size != (uint16_t)sizeof(config)))
+  {
+    return 0U;
+  }
+
+  crc_expected = TrkProbe_Crc32(&config, (uint32_t)(sizeof(config) - sizeof(config.crc32)));
+  if (crc_expected != config.crc32)
+  {
+    return 0U;
+  }
+
+  TrkProbe_ApplyNvConfig(&config);
+  return 1U;
+}
+
+static uint8_t TrkProbe_SaveNvConfig(void)
+{
+  TrkProbeNvConfig config;
+  uint32_t i;
+
+  if (AT24_DetectAddress() != HAL_OK)
+  {
+    return 0U;
+  }
+
+  memset(&config, 0, sizeof(config));
+  config.magic = TRK_PROBE_NV_MAGIC;
+  config.version = TRK_PROBE_NV_VERSION;
+  config.size = (uint16_t)sizeof(config);
+
+  for (i = 0U; i < TRK_PROBE_NUM_CHANNELS; ++i)
+  {
+    config.channels[i].enabled = trk_channels[i].status.enabled;
+    config.channels[i].dispense_mode = trk_channels[i].status.dispense_mode;
+    config.channels[i].price = trk_channels[i].status.price;
+  }
+
+  config.crc32 = TrkProbe_Crc32(&config, (uint32_t)(sizeof(config) - sizeof(config.crc32)));
+
+  if (AT24_Write(TRK_PROBE_NV_ADDR,
+                 (const uint8_t *)&config,
+                 (uint16_t)sizeof(config),
+                 TRK_PROBE_NV_TIMEOUT_MS) != HAL_OK)
   {
     return 0U;
   }
@@ -644,33 +829,8 @@ void TrkProbe_Init(void)
 {
   uint32_t i;
 
-  memset(&trk_channels, 0, sizeof(trk_channels));
-  memset(&trk_probe_status, 0, sizeof(trk_probe_status));
-
-  trk_channels[0].huart = &huart3;
-  trk_channels[0].trk_id = 1U;
-  trk_channels[0].addr_hi = 0x00U;
-  trk_channels[0].addr_lo = 0x01U;
-  trk_channels[0].status.enabled = 1U;
-  trk_channels[0].status.channel_state = (uint8_t)TRK_CHANNEL_OFFLINE;
-  trk_channels[0].status.dispense_mode = (uint8_t)TRK_DISPENSE_MODE_MONEY;
-  TrkProbe_SetPriceEditValue(&trk_channels[0], 1100U);
-  strcpy(trk_channels[0].status.last_ascii, "-");
-
-  trk_channels[1].huart = &huart1;
-  trk_channels[1].trk_id = 2U;
-  trk_channels[1].addr_hi = 0x00U;
-  trk_channels[1].addr_lo = 0x01U;
-  trk_channels[1].status.enabled = 1U;
-  trk_channels[1].status.channel_state = (uint8_t)TRK_CHANNEL_OFFLINE;
-  trk_channels[1].status.dispense_mode = (uint8_t)TRK_DISPENSE_MODE_MONEY;
-  TrkProbe_SetPriceEditValue(&trk_channels[1], 1100U);
-  strcpy(trk_channels[1].status.last_ascii, "-");
-
-  trk_probe_status.active_ui_trk = 1U;
-  trk_probe_status.ui_mode = (uint8_t)TRK_UI_MODE_MAIN;
-  trk_probe_status.menu_index = 0U;
-  trk_probe_status.pending_return_to_menu = 0U;
+  TrkProbe_LoadDefaults();
+  (void)TrkProbe_LoadNvConfig();
   TrkProbe_RefreshUiFlags();
 
   for (i = 0U; i < TRK_PROBE_NUM_CHANNELS; ++i)
@@ -823,6 +983,10 @@ void TrkProbe_HandleKey(const KeyboardEvent *event)
       if ((channel != NULL) && (TrkProbe_IsEnabled(channel) != 0U))
       {
         TrkProbe_CycleDispenseMode(channel);
+        if (TrkProbe_SaveNvConfig() == 0U)
+        {
+          TrkProbe_SetNotice("Save failed", 1200U);
+        }
         TrkProbe_SyncPublicStatus(channel);
       }
       return;
@@ -880,6 +1044,10 @@ void TrkProbe_HandleKey(const KeyboardEvent *event)
           {
             TrkProbe_SelectTrk(2U);
           }
+          if (TrkProbe_SaveNvConfig() == 0U)
+          {
+            TrkProbe_SetNotice("Save failed", 1200U);
+          }
           TrkProbe_SyncPublicStatus(target);
           return;
 
@@ -893,6 +1061,10 @@ void TrkProbe_HandleKey(const KeyboardEvent *event)
           else if (trk_probe_status.active_ui_trk == target->trk_id)
           {
             TrkProbe_SelectTrk(1U);
+          }
+          if (TrkProbe_SaveNvConfig() == 0U)
+          {
+            TrkProbe_SetNotice("Save failed", 1200U);
           }
           TrkProbe_SyncPublicStatus(target);
           return;
@@ -945,10 +1117,9 @@ void TrkProbe_HandleKey(const KeyboardEvent *event)
     else
     {
       trk_probe_status.ui_mode = (uint8_t)TRK_UI_MODE_MENU;
-      (void)snprintf(channel->status.price_edit_buf,
-                     sizeof(channel->status.price_edit_buf),
-                     "%lu",
-                     (unsigned long)channel->status.price);
+      TrkProbe_FormatPrice(channel->status.price,
+                           channel->status.price_edit_buf,
+                           sizeof(channel->status.price_edit_buf));
     }
     return;
   }
@@ -970,7 +1141,14 @@ void TrkProbe_HandleKey(const KeyboardEvent *event)
                          channel->status.price_edit_buf,
                          sizeof(channel->status.price_edit_buf));
     TrkProbe_LogPrice(channel->trk_id, channel->status.price);
-    TrkProbe_SetNotice("Price saved", 1200U);
+    if (TrkProbe_SaveNvConfig() != 0U)
+    {
+      TrkProbe_SetNotice("Price saved", 1200U);
+    }
+    else
+    {
+      TrkProbe_SetNotice("Save failed", 1200U);
+    }
     trk_probe_status.pending_return_to_menu = 1U;
     TrkProbe_SyncPublicStatus(channel);
     return;

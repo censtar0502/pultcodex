@@ -152,12 +152,6 @@ static void ShowTrkProbeStatus(void)
   static TrkProbeStatus last_drawn_status;
   static uint32_t last_draw_ms;
   char line[42];
-  const char *menu_items[4] = {
-    "TRK1 ENABLE",
-    "TRK2 ENABLE",
-    "TRK1 PRICE",
-    "TRK2 PRICE"
-  };
   uint32_t now = HAL_GetTick();
 
   if ((memcmp(&last_drawn_status, status, sizeof(last_drawn_status)) == 0) &&
@@ -179,21 +173,19 @@ static void ShowTrkProbeStatus(void)
   else if (status->ui_mode == (uint8_t)TRK_UI_MODE_MENU)
   {
     SSD1322_DrawString8x8(8U, 0U, "SETUP MENU", 0x0FU);
-    (void)snprintf(line, sizeof(line), "%c %s",
+    (void)snprintf(line, sizeof(line), "%c TRK1 %s",
                    (status->menu_index == 0U) ? '>' : ' ',
-                   menu_items[0]);
+                   (status->trk1.enabled != 0U) ? "ON" : "OFF");
     SSD1322_DrawString8x8(8U, 16U, line, 0x0FU);
-    (void)snprintf(line, sizeof(line), "%c %s",
+    (void)snprintf(line, sizeof(line), "%c TRK2 %s",
                    (status->menu_index == 1U) ? '>' : ' ',
-                   menu_items[1]);
+                   (status->trk2.enabled != 0U) ? "ON" : "OFF");
     SSD1322_DrawString8x8(8U, 28U, line, 0x0FU);
-    (void)snprintf(line, sizeof(line), "%c %s",
-                   (status->menu_index == 2U) ? '>' : ' ',
-                   menu_items[2]);
+    (void)snprintf(line, sizeof(line), "%c TRK1 PRICE",
+                   (status->menu_index == 2U) ? '>' : ' ');
     SSD1322_DrawString8x8(8U, 40U, line, 0x0FU);
-    (void)snprintf(line, sizeof(line), "%c %s",
-                   (status->menu_index == 3U) ? '>' : ' ',
-                   menu_items[3]);
+    (void)snprintf(line, sizeof(line), "%c TRK2 PRICE",
+                   (status->menu_index == 3U) ? '>' : ' ');
     SSD1322_DrawString8x8(8U, 52U, line, 0x0FU);
   }
   else
