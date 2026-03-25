@@ -1444,7 +1444,16 @@ void TrkProbe_Task(void)
       }
       else if (channel->status.channel_state == (uint8_t)TRK_CHANNEL_FINISHED_HOLD)
       {
-        if (channel->close_request_sent == 0U)
+        if ((channel->status.final_data_ready == 0U) &&
+            (channel->final_request_sent == 0U))
+        {
+          sent = TrkProbe_SendSimpleCommand(channel, 'T');
+          if (sent != 0U)
+          {
+            channel->final_request_sent = 1U;
+          }
+        }
+        else if (channel->close_request_sent == 0U)
         {
           sent = TrkProbe_SendSimpleCommand(channel, 'N');
           if (sent != 0U)
