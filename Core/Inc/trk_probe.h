@@ -57,9 +57,16 @@ typedef struct
   char price_text[6];
   uint32_t preset_money;
   uint32_t preset_volume_cl;
+  uint32_t live_money;
+  uint32_t live_volume_cl;
+  uint32_t final_money;
+  uint32_t final_volume_cl;
   uint8_t channel_state;
   uint8_t dispense_mode;
   uint8_t ui_selected;
+  uint8_t transaction_pending;
+  uint8_t final_data_ready;
+  char transaction_id;
   char preset_edit_buf[10];
   char price_edit_buf[6];
   char last_ascii[20];

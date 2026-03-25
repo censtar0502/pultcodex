@@ -129,6 +129,53 @@ static void FormatVolumeCl(uint32_t volume_cl, char *buf, size_t buf_size)
   }
 }
 
+static void FormatChannelHeader(const char *label,
+                                const TrkProbeChannelStatus *ch,
+                                char *buf,
+                                size_t buf_size)
+{
+  uint8_t blink_on = ((HAL_GetTick() / 400U) % 2U) != 0U;
+  const char *suffix = "";
+
+  if ((buf == NULL) || (buf_size == 0U) || (ch == NULL))
+  {
+    return;
+  }
+
+  if ((ch->enabled != 0U) && (ch->online != 0U))
+  {
+    if (((TrkChannelState)ch->channel_state == TRK_CHANNEL_CALLING) &&
+        (ch->transaction_pending == 0U) &&
+        (blink_on != 0U))
+    {
+      suffix = " UP";
+    }
+    else if (((TrkChannelState)ch->channel_state == TRK_CHANNEL_AUTH_WAIT) &&
+             (ch->transaction_pending != 0U) &&
+             (blink_on != 0U))
+    {
+      suffix = " *";
+    }
+    else if (((TrkChannelState)ch->channel_state == TRK_CHANNEL_STARTED) ||
+             ((TrkChannelState)ch->channel_state == TRK_CHANNEL_PAUSED) ||
+             ((TrkChannelState)ch->channel_state == TRK_CHANNEL_FUELLING))
+    {
+      suffix = " UP";
+    }
+    else if (((TrkChannelState)ch->channel_state == TRK_CHANNEL_FINISHING) ||
+             ((TrkChannelState)ch->channel_state == TRK_CHANNEL_FINISHED_HOLD) ||
+             (ch->final_data_ready != 0U))
+    {
+      suffix = " END";
+    }
+  }
+
+  (void)snprintf(buf, buf_size, "%c%s%s",
+                 (ch->ui_selected != 0U) ? '>' : ' ',
+                 label,
+                 suffix);
+}
+
 static void ShowMainChannelPanel(uint8_t x, const char *label,
                                  const TrkProbeChannelStatus *ch)
 {
@@ -137,9 +184,7 @@ static void ShowMainChannelPanel(uint8_t x, const char *label,
   char sub_text[24];
   const char *fallback_text = ChannelMainText(ch);
 
-  (void)snprintf(line, sizeof(line), "%c%s",
-                 (ch->ui_selected != 0U) ? '>' : ' ',
-                 label);
+  FormatChannelHeader(label, ch, line, sizeof(line));
   SSD1322_DrawString8x8(x, 0U, line, 0x0FU);
 
   main_text[0] = '\0';
@@ -147,14 +192,32 @@ static void ShowMainChannelPanel(uint8_t x, const char *label,
 
   if ((ch->enabled != 0U) && (ch->online != 0U))
   {
+    uint32_t shown_money = ch->preset_money;
+    uint32_t shown_volume_cl = ch->preset_volume_cl;
+
+    if (ch->final_data_ready != 0U)
+    {
+      shown_money = ch->final_money;
+      shown_volume_cl = ch->final_volume_cl;
+    }
+    else if (((TrkChannelState)ch->channel_state == TRK_CHANNEL_STARTED) ||
+             ((TrkChannelState)ch->channel_state == TRK_CHANNEL_PAUSED) ||
+             ((TrkChannelState)ch->channel_state == TRK_CHANNEL_FUELLING) ||
+             ((TrkChannelState)ch->channel_state == TRK_CHANNEL_FINISHING) ||
+             ((TrkChannelState)ch->channel_state == TRK_CHANNEL_FINISHED_HOLD))
+    {
+      shown_money = ch->live_money;
+      shown_volume_cl = ch->live_volume_cl;
+    }
+
     switch ((TrkDispenseMode)ch->dispense_mode)
     {
       case TRK_DISPENSE_MODE_MONEY:
         (void)snprintf(main_text, sizeof(main_text), "A:%lu",
-                       (unsigned long)ch->preset_money);
+                       (unsigned long)shown_money);
         {
           char volume_text[16];
-          FormatVolumeCl(ch->preset_volume_cl, volume_text, sizeof(volume_text));
+          FormatVolumeCl(shown_volume_cl, volume_text, sizeof(volume_text));
           (void)snprintf(sub_text, sizeof(sub_text), "L:%s", volume_text);
         }
         break;
@@ -162,11 +225,11 @@ static void ShowMainChannelPanel(uint8_t x, const char *label,
       case TRK_DISPENSE_MODE_VOLUME:
         {
           char volume_text[16];
-          FormatVolumeCl(ch->preset_volume_cl, volume_text, sizeof(volume_text));
+          FormatVolumeCl(shown_volume_cl, volume_text, sizeof(volume_text));
           (void)snprintf(main_text, sizeof(main_text), "L:%s", volume_text);
         }
         (void)snprintf(sub_text, sizeof(sub_text), "A:%lu",
-                       (unsigned long)ch->preset_money);
+                       (unsigned long)shown_money);
         break;
 
       case TRK_DISPENSE_MODE_FULL:
@@ -174,7 +237,7 @@ static void ShowMainChannelPanel(uint8_t x, const char *label,
         (void)snprintf(main_text, sizeof(main_text), "H");
         {
           char volume_text[16];
-          FormatVolumeCl(ch->preset_volume_cl, volume_text, sizeof(volume_text));
+          FormatVolumeCl(shown_volume_cl, volume_text, sizeof(volume_text));
           (void)snprintf(sub_text, sizeof(sub_text), "L:%s", volume_text);
         }
         break;
@@ -223,6 +286,10 @@ static void ShowTrkProbeStatus(void)
   {
     ShowMainChannelPanel(8U, "TRK1", &status->trk1);
     ShowMainChannelPanel(136U, "TRK2", &status->trk2);
+    if (status->notice[0] != '\0')
+    {
+      SSD1322_DrawString8x8(90U, 56U, status->notice, 0x0FU);
+    }
   }
   else if (status->ui_mode == (uint8_t)TRK_UI_MODE_MENU)
   {
