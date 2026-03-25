@@ -19,6 +19,7 @@
 
 #define TRK_PROBE_NUM_CHANNELS     2U
 #define TRK_PROBE_MENU_ITEMS       4U
+#define TRK_PROBE_OFFLINE_AFTER_MISSES 5U
 #define TRK_PROBE_NV_MAGIC         0x54524B50UL
 #define TRK_PROBE_NV_VERSION       2U
 #define TRK_PROBE_NV_ADDR          0x0000U
@@ -37,6 +38,7 @@ typedef struct
   uint8_t frame_buf[8];
   uint8_t frame_len;
   uint8_t tx_buf[TRK_PROBE_FRAME_LEN];
+  uint8_t comm_fail_streak;
   uint32_t last_poll_tick;
   uint32_t last_tx_tick;
   TrkProbeChannelStatus status;
@@ -81,6 +83,8 @@ static void TrkProbe_ExitToMain(void);
 static void TrkProbe_SetNotice(const char *text, uint32_t duration_ms);
 static void TrkProbe_CycleDispenseMode(TrkProbeChannel *channel);
 static uint32_t TrkProbe_Crc32(const void *data, uint32_t len);
+static void TrkProbe_RegisterCommSuccess(TrkProbeChannel *channel);
+static void TrkProbe_RegisterCommFailure(TrkProbeChannel *channel);
 static void TrkProbe_LoadDefaults(void);
 static void TrkProbe_ApplyNvConfig(const TrkProbeNvConfig *config);
 static uint8_t TrkProbe_LoadNvConfig(void);
@@ -555,6 +559,36 @@ static void TrkProbe_CycleDispenseMode(TrkProbeChannel *channel)
   }
 }
 
+static void TrkProbe_RegisterCommSuccess(TrkProbeChannel *channel)
+{
+  if (channel == NULL)
+  {
+    return;
+  }
+
+  channel->comm_fail_streak = 0U;
+  channel->status.online = 1U;
+}
+
+static void TrkProbe_RegisterCommFailure(TrkProbeChannel *channel)
+{
+  if (channel == NULL)
+  {
+    return;
+  }
+
+  if (channel->comm_fail_streak < 0xFFU)
+  {
+    ++channel->comm_fail_streak;
+  }
+
+  if (channel->comm_fail_streak >= TRK_PROBE_OFFLINE_AFTER_MISSES)
+  {
+    channel->status.online = 0U;
+    channel->status.channel_state = (uint8_t)TRK_CHANNEL_OFFLINE;
+  }
+}
+
 static void TrkProbe_UpdateStateFromStatus(TrkProbeChannel *channel, uint8_t status_raw)
 {
   if (channel == NULL)
@@ -804,21 +838,23 @@ static void TrkProbe_HandleStatusResponse(TrkProbeChannel *channel, const uint8_
   if (crc_expected != data[len - 1U])
   {
     ++channel->status.crc_error_count;
-    channel->status.online = 0U;
+    channel->status.waiting_reply = 0U;
+    TrkProbe_RegisterCommFailure(channel);
     return;
   }
 
   if ((data[0] != 0x02U) || (data[1] != channel->addr_hi) || (data[2] != channel->addr_lo) || (data[3] != (uint8_t)'S'))
   {
     ++channel->status.crc_error_count;
-    channel->status.online = 0U;
+    channel->status.waiting_reply = 0U;
+    TrkProbe_RegisterCommFailure(channel);
     return;
   }
 
   channel->status.last_status = data[4];
   channel->status.last_nozzle = data[5];
-  channel->status.online = 1U;
   channel->status.waiting_reply = 0U;
+  TrkProbe_RegisterCommSuccess(channel);
   TrkProbe_UpdateStateFromStatus(channel, data[4]);
   ++channel->status.ok_count;
 }
@@ -857,6 +893,7 @@ void TrkProbe_Task(void)
 
     if (TrkProbe_IsEnabled(channel) == 0U)
     {
+      channel->comm_fail_streak = 0U;
       channel->status.online = 0U;
       channel->status.waiting_reply = 0U;
       channel->status.tx_busy = 0U;
@@ -870,10 +907,9 @@ void TrkProbe_Task(void)
         ((now - channel->last_tx_tick) >= TRK_PROBE_TIMEOUT_MS))
     {
       channel->status.waiting_reply = 0U;
-      channel->status.online = 0U;
-      channel->status.channel_state = (uint8_t)TRK_CHANNEL_OFFLINE;
       channel->frame_len = 0U;
       ++channel->status.timeout_count;
+      TrkProbe_RegisterCommFailure(channel);
       {
         static const char *const trk_labels[] = {"TRK1", "TRK2", "TRK3"};
         uint8_t idx = (channel->trk_id >= 1U && channel->trk_id <= 3U)
