@@ -111,22 +111,9 @@ static void FormatVolumeCl(uint32_t volume_cl, char *buf, size_t buf_size)
     return;
   }
 
-  if (frac == 0U)
-  {
-    (void)snprintf(buf, buf_size, "%lu", (unsigned long)liters);
-  }
-  else if ((frac % 10U) == 0U)
-  {
-    (void)snprintf(buf, buf_size, "%lu.%lu",
-                   (unsigned long)liters,
-                   (unsigned long)(frac / 10U));
-  }
-  else
-  {
-    (void)snprintf(buf, buf_size, "%lu.%02lu",
-                   (unsigned long)liters,
-                   (unsigned long)frac);
-  }
+  (void)snprintf(buf, buf_size, "%lu.%02lu",
+                 (unsigned long)liters,
+                 (unsigned long)frac);
 }
 
 static void FormatChannelHeader(const char *label,
